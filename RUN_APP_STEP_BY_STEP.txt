@@ -1,0 +1,153 @@
+SilentAxis Backend - Step-by-Step Run Guide
+Generated on: 2026-04-14
+
+================================================================
+1) PREREQUISITES
+================================================================
+Install these first:
+- Node.js 18+ (recommended)
+- npm
+- PostgreSQL (running)
+- Redis (running)
+
+Optional for S3 storage mode:
+- S3-compatible bucket/service (AWS S3, MinIO, etc.)
+
+Optional for ZK compile/proof generation:
+- circom
+- snarkjs
+
+
+================================================================
+2) OPEN PROJECT
+================================================================
+In terminal:
+1) cd "c:\Users\user\SilentAxis"
+
+
+================================================================
+3) INSTALL DEPENDENCIES
+================================================================
+Run:
+1) npm install
+
+
+================================================================
+4) CONFIGURE ENV FILE
+================================================================
+1) Copy .env.example to .env
+2) Update values in .env
+
+Minimum required values:
+- PORT=4000
+- DATABASE_URL=postgres://postgres:postgres@localhost:5432/silentaxis
+- JWT_SECRET=<your_secret>
+- ENCRYPTION_KEY_32=<exactly_32_characters>
+- REDIS_URL=redis://localhost:6379
+- CORS_ORIGIN=http://localhost:3000
+- ENCRYPTION_KEY_VERSION=v1
+- STORAGE_DRIVER=local
+
+If using STORAGE_DRIVER=s3, also set:
+- S3_ENDPOINT
+- S3_REGION
+- S3_BUCKET
+- S3_ACCESS_KEY_ID
+- S3_SECRET_ACCESS_KEY
+
+
+================================================================
+5) CREATE DATABASE SCHEMA
+================================================================
+Apply schema file:
+1) Open PostgreSQL client (psql/pgAdmin/DB tool)
+2) Run SQL from:
+   src/db/schema.sql
+
+This creates all required tables and triggers.
+
+
+================================================================
+6) START REQUIRED SERVICES
+================================================================
+Make sure these are running:
+1) PostgreSQL
+2) Redis
+
+
+================================================================
+7) RUN THE BACKEND (DEV MODE)
+================================================================
+Run:
+1) npm run dev
+
+Expected behavior on successful startup:
+- cleanup worker runs
+- ZK verification key is initialized
+- export worker starts
+- evidence scan worker starts
+- server log prints:
+  SilentAxis backend running on port <PORT>
+
+
+================================================================
+8) QUICK HEALTH CHECK
+================================================================
+Test API:
+1) GET http://localhost:4000/health
+
+Expected response:
+- {"status":"ok"}
+
+
+================================================================
+9) OPTIONAL: RUN TESTS
+================================================================
+Run:
+1) npm test
+
+
+================================================================
+10) OPTIONAL: BUILD + RUN PRODUCTION MODE
+================================================================
+Build:
+1) npm run build
+
+Run compiled app:
+2) npm start
+
+
+================================================================
+11) OPTIONAL: ZK TOOLING COMMANDS
+================================================================
+Compile circuit and export verification key:
+1) npm run zk:compile
+
+Generate proof using script:
+2) npm run zk:proof
+
+Note:
+- Runtime complaint verification expects a valid
+  zk/build/verification_key.json
+
+
+================================================================
+12) COMMON ISSUES AND FIXES
+================================================================
+Issue: "Missing required environment variables"
+- Fix: Check DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY_32 in .env
+
+Issue: "ENCRYPTION_KEY_32 must be exactly 32 chars"
+- Fix: Provide exactly 32 characters
+
+Issue: Redis errors / device binding unavailable
+- Fix: Ensure REDIS_URL is correct and Redis is running
+
+Issue: DB connection failures
+- Fix: Verify PostgreSQL is up and DATABASE_URL is valid
+
+Issue: ZK verification fails
+- Fix: Ensure proof/public signals match current circuit and verification key
+
+
+End of run guide.

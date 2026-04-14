@@ -1,0 +1,11 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.complaintsRouter = void 0;
+const express_1 = require("express");
+const auth_1 = require("../../middleware/auth");
+const deviceBinding_1 = require("../../middleware/deviceBinding");
+const identityDrop_1 = require("../../middleware/identityDrop");
+const complaints_controller_1 = require("./complaints.controller");
+exports.complaintsRouter = (0, express_1.Router)();
+exports.complaintsRouter.post("/", auth_1.requireAuth, deviceBinding_1.enforceDeviceBinding, identityDrop_1.enforceIdentityDrop, complaints_controller_1.createComplaint);
+exports.complaintsRouter.post("/:id/evidence", auth_1.requireAuth, deviceBinding_1.enforceDeviceBinding, identityDrop_1.enforceIdentityDrop, complaints_controller_1.uploadEvidence);

@@ -1,0 +1,731 @@
+SilentAxis Backend - Updated Detailed Implementation Report
+Generated on: 2026-04-14
+
+================================================================
+0) EXECUTIVE SNAPSHOT
+================================================================
+The backend is actively implemented as a TypeScript + Express service for anonymous
+whistleblower workflows with ZK proof verification, scoped admin workflows, reporter
+communications, encrypted evidence handling, and async workers.
+
+Current major capabilities:
+- Mock SSO login + JWT role-based auth
+- Anonymous identity commitment registration with Merkle root persistence
+- Complaint submission using Groth16 proof verification
+- Nullifier replay prevention + root allow-list checks
+- Complaint evidence upload with async evidence scanning
+- Reporter complaint-side session and encrypted message channel
+- Admin complaint operations, exports, and stats
+- Redis-backed queues/workers and device binding
+- Local or S3-compatible evidence storage backend
+
+
+================================================================
+1) TECH STACK
+================================================================
+Language/runtime:
+- Node.js
+- TypeScript (strict)
+
+Backend/core:
+- express
+- zod
+- pg
+- jsonwebtoken
+- uuid
+
+Security and middleware:
+- helmet
+- cors
+- express-rate-limit
+
+Infra/async:
+- ioredis
+- bullmq
+
+ZK:
+- snarkjs
+- circomlibjs
+- ffjavascript
+
+Storage:
+- @aws-sdk/client-s3
+
+Testing:
+- jest
+- ts-jest
+- supertest
+
+
+================================================================
+2) ENV + CONFIG (CURRENT)
+================================================================
+Required:
+- DATABASE_URL
+- JWT_SECRET
+- ENCRYPTION_KEY_32 (32 chars)
+
+Also used:
+- PORT
+- REDIS_URL
+- CORS_ORIGIN
+- ENCRYPTION_KEY_VERSION
+- STORAGE_DRIVER (local or s3)
+- S3_ENDPOINT
+- S3_REGION
+- S3_BUCKET
+- S3_ACCESS_KEY_ID
+- S3_SECRET_ACCESS_KEY
+
+Config files:
+- src/config/env.ts
+- src/config/db.ts
+- src/config/redis.ts
+
+
+================================================================
+3) DATABASE SCHEMA STATUS
+================================================================
+Current tables:
+- organizations
+- users
+- identity_commitments
+- merkle_roots
+- encryption_keys
+- nullifiers
+- complaints
+- complaint_updates
+- complaint_hashes
+- org_audit_logs
+- export_jobs
+- reporter_sessions
+- reporter_messages
+- conversation_keys
+- complaint_evidence
+
+Key complaint fields:
+- encrypted_data
+- encrypted_key
+- category enum
+- complaint_status enum
+
+Evidence table:
+- scan_status enum: PENDING, SAFE, REJECTED
+- scan_reason field
+
+Integrity protections:
+- complaints delete blocked (append-only trigger)
+- immutable complaint fields blocked on update
+
+
+================================================================
+4) SERVER BOOT + GLOBAL FLOW
+================================================================
+Bootstrap sequence (src/server.ts):
+1) cleanupOldExportJobs()
+2) zkVerifier.initialize()
+3) startExportWorker()
+4) startEvidenceScanWorker()
+5) start HTTP server
+
+Global middleware (src/app.ts):
+- helmet
+- cors
+- json parser (5mb)
+- apiRateLimit
+- torHeaders (marks onion/tor-style context flag)
+- requestAuditLog
+- errorHandler
+
+Routes:
+- /health
+- /auth
+- /identity
+- /complaints
+- /reporter
+- admin routes mounted at /
+
+
+================================================================
+5) AUTH, ROLES, ISOLATION, PRIVACY
+================================================================
+Auth endpoint:
+- POST /auth/login
+- Mock SSO allowed emails map to EMPLOYEE / ORG_ADMIN / ORG_STAFF
+
+Auth middleware:
+- requireAuth
+- requireRole
+- enforceOrgIsolation
+
+Privacy boundary:
+- enforceIdentityDrop rewrites user identity fields before complaint logic
+
+Device binding:
+- Redis-backed fingerprint lock per session (x-device-fingerprint header)
+- mismatch blocked, TTL refreshed on valid requests
+
+
+================================================================
+6) IDENTITY COMMITMENT FLOW
+================================================================
+Endpoint:
+- POST /identity/register
+
+Behavior:
+- secret generation and commitment derivation
+- Merkle tree rebuild for org commitments
+- commitment insert with leaf index and root
+- root persisted into merkle_roots table for later complaint proof validation
+
+
+================================================================
+7) COMPLAINT SUBMISSION FLOW (LATEST)
+================================================================
+Endpoint:
+- POST /complaints
+
+Expected payload:
+- encryptedComplaint
+- optional encryptedKey
+- category
+- root
+- nullifierHash
+- Groth16 proof (pi_a, pi_b, pi_c, optional protocol/curve)
+
+Validation and processing:
+1) payload schema validation
+2) encrypted payload guard
+3) zkVerifier.verifyProof(proof, root, nullifierHash)
+4) root must exist for same org in merkle_roots and be within 180-day window
+5) nullifier must be unused
+6) insert complaint + initial update
+7) store complaint hash + simulated chain anchor
+
+Failure conditions:
+- Invalid proof
+- Unknown Merkle root
+- Duplicate nullifier
+
+
+================================================================
+8) EVIDENCE UPLOAD + SCAN PIPELINE
+================================================================
+Upload endpoint:
+- POST /complaints/:id/evidence
+
+Flow:
+1) validate payload
+2) verify complaint belongs to caller org
+3) store wrapped encrypted evidence via storage provider
+4) insert complaint_evidence row as scan_status = PENDING
+5) enqueue evidence scan job
+
+Storage abstraction:
+- LocalStorageProvider -> filesystem path in storage/evidence
+- S3CompatibleStorageProvider -> returns s3://bucket/key path
+
+Evidence scan worker:
+- queue: evidence-scan
+- local files:
+  - rejects suspicious extensions (.exe/.dll/.bat/.cmd/.js)
+  - rejects file size > 10MB
+  - marks SAFE otherwise
+- s3:// objects:
+  - accepted by current policy as SAFE with reason
+
+
+================================================================
+9) ADMIN/STAFF FEATURES
+================================================================
+Implemented endpoints:
+- GET /org/:orgId/complaints
+- GET /complaints/:id/timeline
+- POST /complaints/:id/update
+- POST /admin/export
+- GET /admin/stats
+
+Capabilities:
+- scoped complaint listing with optional category filter
+- timeline view and updates with optional status transitions
+- async export job creation
+- analytics: per-category, per-month, average resolution, open/closed cases
+- audit events for timeline view/update/export
+
+
+================================================================
+10) REPORTER MODULE
+================================================================
+Endpoints:
+- POST /reporter/session
+- POST /reporter/login
+- POST /reporter/message
+- GET /reporter/messages/:complaintId
+
+Behavior:
+- reporter secret encrypted in reporter_sessions
+- login compares decrypted secret
+- reporter/investigator messages stored encrypted
+- retrieval returns stored encrypted payloads
+
+
+================================================================
+11) QUEUES AND WORKERS
+================================================================
+Export queue:
+- queue name: export-jobs
+- worker writes CSV and updates job status
+
+Evidence scan queue:
+- queue name: evidence-scan
+- worker updates scan_status and scan_reason
+
+Startup behavior:
+- both workers started during bootstrap
+
+
+================================================================
+12) ZK SYSTEM STATUS
+================================================================
+Circuit:
+- zk/circuits/complaintProof.circom
+
+Verification key:
+- zk/build/verification_key.json loaded at runtime
+
+Verifier:
+- src/zk/verifier.ts
+- uses snarkjs.groth16.verify(publicSignals=[nullifierHash, root], proof)
+- initialized at server startup
+
+Proof type:
+- src/types/zk.ts -> Groth16Proof
+
+Scripts:
+- npm run zk:compile
+- npm run zk:proof
+
+
+================================================================
+13) SECURITY CONTROLS IMPLEMENTED
+================================================================
+- JWT auth + role checks
+- org isolation enforcement
+- identity drop boundary
+- device fingerprint binding via Redis
+- rate limiting
+- helmet + CSP
+- CORS restriction
+- Merkle root allow-list and age window checks
+- nullifier replay prevention
+- append-only/immutable complaint DB constraints
+- request-level audit logging
+- async evidence risk screening pipeline
+
+
+================================================================
+14) TEST COVERAGE PRESENT
+================================================================
+Integration tests present:
+- complaint submission flow
+- reporter login
+- device binding mismatch block
+- duplicate nullifier rejection
+- tenant isolation rejection
+
+
+================================================================
+15) KNOWN NOTES
+================================================================
+- Mock SSO identity source is still static and demo-oriented.
+- Reporter message listing is encrypted payload output (no decrypt API yet).
+- ZK validation depends on matching proving/verifying artifacts.
+- S3 evidence is currently policy-accepted during scan worker processing.
+
+
+================================================================
+16) LATEST CHANGES INCLUDED IN THIS UPDATE
+================================================================
+- Added encryption_keys and conversation_keys schema coverage.
+- Added complaint_evidence scan_status/scan_reason workflow.
+- Added evidence scan queue/worker behavior.
+- Added torHeaders middleware behavior.
+- Added storage driver abstraction (local + S3-compatible) and required env vars.
+- Added startup changes: zkVerifier.initialize() and startEvidenceScanWorker().
+- Added @aws-sdk/client-s3 dependency and storage configuration details.
+
+End of report.
+SilentAxis Backend - Updated Detailed Implementation Report
+Generated on: 2026-04-14
+
+================================================================
+0) EXECUTIVE SNAPSHOT
+================================================================
+Current backend status:
+- TypeScript + Express whistleblower backend is implemented and runnable.
+- Includes JWT auth, anonymous identity commitments, complaint intake, admin workflows,
+  reporter communication, evidence storage, export jobs, and security middleware.
+- ZK flow is now upgraded to Groth16 verification with Circom/snarkjs integration.
+
+Major active capabilities:
+- Mock SSO login and role-based JWT access
+- Identity commitment registration + Merkle root tracking
+- Complaint submission with Groth16 proof verification
+- Nullifier anti-replay protection
+- Complaint evidence upload and encrypted-at-rest file wrapping
+- Admin timeline updates, status transitions, exports, and stats
+- Reporter secret-based login and encrypted messaging
+- Redis-backed device binding + BullMQ export worker
+
+
+================================================================
+1) TECH STACK AND DEPENDENCIES
+================================================================
+Runtime and language:
+- Node.js
+- TypeScript (strict mode, CommonJS output)
+
+Core backend libraries:
+- express, zod, pg, jsonwebtoken, uuid
+- helmet, cors, express-rate-limit
+- ioredis, bullmq
+
+ZK stack:
+- snarkjs
+- circomlibjs
+- ffjavascript
+
+Testing stack:
+- jest
+- ts-jest
+- supertest
+
+Important npm scripts:
+- npm run dev
+- npm run build
+- npm start
+- npm test
+- npm run zk:compile
+- npm run zk:proof
+
+
+================================================================
+2) CONFIGURATION AND ENV
+================================================================
+Required env:
+- DATABASE_URL
+- JWT_SECRET
+- ENCRYPTION_KEY_32 (exactly 32 chars)
+
+Optional/used:
+- PORT (default 4000)
+- REDIS_URL
+- CORS_ORIGIN (default http://localhost:3000)
+
+Config files:
+- src/config/env.ts
+- src/config/db.ts
+- src/config/redis.ts
+
+
+================================================================
+3) DATABASE SCHEMA STATUS
+================================================================
+Core tables:
+- organizations
+- users
+- identity_commitments
+- merkle_roots
+- nullifiers
+- complaints
+- complaint_updates
+- complaint_hashes
+- org_audit_logs
+- export_jobs
+- reporter_sessions
+- reporter_messages
+- complaint_evidence
+
+Complaint model highlights:
+- encrypted_data + optional encrypted_key
+- category enum: fraud, harassment, safety, corruption, other
+- complaint_status enum:
+  SUBMITTED, UNDER_REVIEW, INVESTIGATING, RESOLVED, DISMISSED
+
+DB integrity protections:
+- complaints are append-only (delete trigger blocked)
+- immutable complaint fields enforced by update trigger
+
+
+================================================================
+4) SERVER BOOT AND GLOBAL MIDDLEWARE
+================================================================
+Bootstrap flow (src/server.ts):
+1) cleanupOldExportJobs()
+2) startExportWorker()
+3) listen on configured port
+
+Global middleware (src/app.ts):
+- helmet (CSP defaultSrc self)
+- cors (origin from env)
+- express.json (5mb)
+- api rate limit
+- sqlInjectionGuard
+- requestAuditLog
+- errorHandler
+
+Mounted route groups:
+- /auth
+- /identity
+- /complaints
+- /reporter
+- admin routes under /
+- /health
+
+
+================================================================
+5) AUTH, ACCESS CONTROL, TENANT BOUNDARY
+================================================================
+Auth:
+- POST /auth/login with email
+- mock SSO map allows:
+  - employee@acme.com
+  - admin@acme.com
+  - staff@acme.com
+- returns JWT (1h)
+
+Role and scope middleware:
+- requireAuth
+- requireRole
+- enforceOrgIsolation (org route must match token org)
+
+Privacy boundary middleware:
+- enforceIdentityDrop anonymizes user identity fields before complaint logic
+
+Device binding:
+- enforceDeviceBinding uses Redis key device:<sessionId>
+- requires x-device-fingerprint header
+- binds first fingerprint for 1h TTL and rejects mismatches
+
+
+================================================================
+6) IDENTITY COMMITMENT FLOW
+================================================================
+Endpoint:
+- POST /identity/register
+
+Flow:
+- secret generated if not provided as commitment
+- commitment derived as sha256(secret)
+- org commitments loaded, Merkle tree rebuilt
+- new commitment inserted with leaf index and root
+- root also inserted into merkle_roots (deduplicated)
+- response returns secret, commitment, root, proof metadata
+
+
+================================================================
+7) COMPLAINT FLOW (UPDATED WITH ZK)
+================================================================
+Endpoint:
+- POST /complaints
+
+Input supports:
+- encryptedComplaint
+- optional encryptedKey
+- category
+- proof (Groth16 format: pi_a, pi_b, pi_c, optional protocol/curve)
+- nullifierHash
+- root
+
+Validation/execution order:
+1) Zod payload validation
+2) encrypted payload format validation
+3) Groth16 verify via zkVerifier.verifyProof(proof, root, nullifierHash)
+4) Root must exist in merkle_roots for same org
+5) Nullifier must be unused
+6) Insert complaint row
+7) Insert initial timeline update
+8) Store complaint hash and simulate chain anchoring
+
+Anti-abuse behavior:
+- duplicate nullifier rejected
+- unknown root rejected
+- invalid proof rejected
+
+
+================================================================
+8) EVIDENCE UPLOAD FLOW
+================================================================
+Endpoint:
+- POST /complaints/:id/evidence
+
+Behavior:
+- validates payload (fileName, encryptedFileBase64, encryptedKey)
+- checks complaint exists and belongs to caller org
+- stores wrapped encrypted blob under storage/evidence
+- records complaint_evidence row with encrypted key
+
+
+================================================================
+9) ADMIN/STAFF WORKFLOWS
+================================================================
+Endpoints:
+- GET /org/:orgId/complaints
+  - pagination + sort + optional category filter
+- GET /complaints/:id/timeline
+  - org-scoped timeline retrieval
+- POST /complaints/:id/update
+  - add message + optional status transition
+- POST /admin/export
+  - creates export job and queues async worker task
+- GET /admin/stats
+  - category/month aggregates, resolution average, open/closed counts
+
+Audit logging:
+- VIEW_TIMELINE
+- UPDATE_COMPLAINT
+- EXPORT_DATA
+
+
+================================================================
+10) REPORTER MODULE
+================================================================
+Endpoints:
+- POST /reporter/session
+- POST /reporter/login
+- POST /reporter/message
+- GET /reporter/messages/:complaintId
+
+Behavior:
+- reporter secret stored encrypted in reporter_sessions
+- login compares decrypted stored secret with provided one
+- reporter/investigator messages stored encrypted
+- message list currently returns encrypted payload as stored
+
+
+================================================================
+11) EXPORT QUEUE AND WORKERS
+================================================================
+Queue:
+- BullMQ queue name: export-jobs
+
+Worker behavior:
+- loads pending job by exportJobId
+- marks PROCESSING
+- exports complaints (with optional category filter) to CSV
+- writes exports/<jobId>.csv
+- marks COMPLETED or FAILED
+
+Cleanup worker:
+- removes old completed/failed export jobs
+- deletes associated files when present
+
+
+================================================================
+12) ZK SYSTEM STATUS (LATEST)
+================================================================
+Circuit:
+- zk/circuits/complaintProof.circom
+- Poseidon-based commitment/nullifier hash constraints
+- Merkle path verification in circuit
+
+Build/runtime artifacts:
+- zk/build/verification_key.json present
+- verifier loads verification key lazily from disk
+
+Runtime verifier:
+- src/zk/verifier.ts
+- calls snarkjs.groth16.verify with public signals:
+  [nullifierHash, root]
+
+Typed proof contract:
+- src/types/zk.ts -> Groth16Proof
+
+
+================================================================
+13) SECURITY CONTROLS IMPLEMENTED
+================================================================
+- JWT auth
+- role checks
+- org isolation checks
+- identity drop boundary
+- Redis device binding
+- rate limiting
+- helmet + CSP
+- CORS restriction
+- SQL-ish suspicious input guard
+- append-only/immutable complaint DB triggers
+- nullifier replay prevention
+- Merkle root allow-list check (per org)
+- request-level minimal audit logging
+
+
+================================================================
+14) TEST COVERAGE PRESENT
+================================================================
+Integration tests detected:
+- tests/integration/complaint-submission-flow.test.ts
+- tests/integration/reporter-login.test.ts
+- tests/integration/device-binding.test.ts
+- tests/integration/nullifier-reuse.test.ts
+- tests/integration/tenant-isolation.test.ts
+
+Test config:
+- jest.config.js (ts-jest, node)
+- tests/setup-env.ts
+
+
+================================================================
+15) HOW IT RUNS (PRACTICAL)
+================================================================
+Startup:
+- server starts cleanup and export worker, then serves API traffic.
+
+Protected routes:
+- JWT + role middleware apply
+- org/device/privacy boundaries applied by route context
+
+Anonymous complaint path:
+- user access verified
+- identity dropped before sensitive complaint handling
+- ZK proof and root validated
+- complaint committed immutably with timeline and hash entries
+
+
+================================================================
+16) LOCAL RUN GUIDE
+================================================================
+1) npm install
+2) copy .env.example to .env and set values
+3) start PostgreSQL and Redis
+4) apply src/db/schema.sql
+5) npm run dev
+
+Optional:
+- npm test
+- npm run build
+- npm run zk:compile
+- npm run zk:proof
+
+
+================================================================
+17) CURRENT LIMITS / NOTES
+================================================================
+- Mock SSO email map is still static/demo style.
+- SQL guard is regex-based and can be strict on edge payloads.
+- Reporter message listing returns encrypted message content (no API decrypt path).
+- Export files intentionally contain encrypted complaint payloads.
+- ZK verification requires compatible verification key and generated proofs.
+
+
+================================================================
+18) NEW CHANGES REFLECTED IN THIS UPDATE
+================================================================
+- Added ZK dependency/runtime details (snarkjs/circomlibjs/ffjavascript).
+- Added new ZK scripts (zk:compile, zk:proof).
+- Added merkle_roots table and org-root validation in complaint submit path.
+- Updated complaint proof format from mock structure to Groth16 structure.
+- Updated identity flow to persist roots for later proof verification.
+- Added explicit ZK system status section with circuit/verifier details.
+
+End of report.
