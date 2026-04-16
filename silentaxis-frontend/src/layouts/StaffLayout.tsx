@@ -21,6 +21,7 @@ export function StaffLayout() {
   const setStaff = useAuthStore((s) => s.setStaff);
   const nav = useNavigate();
   const logout = useStaffLogout();
+  const canSeeAnalytics = ["ORG_ADMIN", "HR", "MANAGER"].includes(staff?.role ?? "");
 
   return (
     <div className="min-h-full bg-slate-50">
@@ -38,7 +39,7 @@ export function StaffLayout() {
               onClick={async () => {
                 await logout.mutateAsync();
                 setStaff(null);
-                nav("/staff/login");
+                nav("/login");
               }}
             >
               Logout
@@ -52,7 +53,7 @@ export function StaffLayout() {
             <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Navigation</div>
             <div className="space-y-1">
               <SideLink to="/staff/dashboard" label="Dashboard" />
-              <SideLink to="/staff/analytics" label="Analytics" />
+              {canSeeAnalytics ? <SideLink to="/staff/analytics" label="Analytics" /> : null}
             </div>
           </div>
           <div className="mt-4 rounded-xl border bg-white p-4 text-xs text-slate-600">

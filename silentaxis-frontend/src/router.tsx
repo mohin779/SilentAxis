@@ -5,7 +5,7 @@ import { StaffLayout } from "./layouts/StaffLayout";
 import { VerifyPage } from "./pages/VerifyPage";
 import { ReportPage } from "./pages/ReportPage";
 import { StatusPage } from "./pages/StatusPage";
-import { StaffLoginPage } from "./pages/staff/StaffLoginPage";
+import { LoginPage } from "./pages/LoginPage";
 import { StaffDashboardPage } from "./pages/staff/StaffDashboardPage";
 import { StaffComplaintPage } from "./pages/staff/StaffComplaintPage";
 import { StaffAnalyticsPage } from "./pages/staff/StaffAnalyticsPage";
@@ -30,7 +30,8 @@ export const router = createBrowserRouter([
       { path: "status", element: <StatusPage /> }
     ]
   },
-  { path: "/staff/login", element: <StaffLoginPage /> },
+  { path: "/login", element: <LoginPage /> },
+  { path: "/staff/login", element: <Navigate to="/login" replace /> },
   {
     path: "/staff",
     element: (

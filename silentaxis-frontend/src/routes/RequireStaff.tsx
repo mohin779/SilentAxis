@@ -17,6 +17,6 @@ export function RequireStaff(props: { children: React.ReactNode }) {
     setStaff(me.data);
     return <>{props.children}</>;
   }
-  return <Navigate to="/staff/login" replace />;
+  return <Navigate to="/login" replace />;
 }
 
