@@ -17,6 +17,15 @@ const listSchema = z.object({
 
 type StaffReq = Request & { session: any; staff?: StaffSessionUser };
 
+const employeeSchema = z.object({
+  employeeIdentifier: z.string().min(3).max(320),
+  officialEmail: z.string().email()
+});
+
+const bulkEmployeeSchema = z.object({
+  csvText: z.string().min(1)
+});
+
 export async function listComplaints(req: StaffReq, res: Response): Promise<void> {
   const parsed = listSchema.safeParse(req.query);
   if (!parsed.success) {
@@ -195,5 +204,107 @@ export async function getAdminStats(req: StaffReq, res: Response): Promise<void>
     averageInvestigationHours: resolutionTime.rows[0]?.avg_resolution_hours ?? null,
     complaintsPerInvestigator: perInvestigator.rows,
     caseState: openClosed.rows[0]
+  });
+}
+
+export async function listEmployees(req: StaffReq, res: Response): Promise<void> {
+  const staff = req.session?.staff as StaffSessionUser | undefined;
+  if (!staff) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const rows = await pool.query(
+    `SELECT id, org_id, employee_identifier, official_email, created_at
+     FROM org_employees
+     WHERE org_id = $1
+     ORDER BY created_at DESC`,
+    [staff.orgId]
+  );
+  res.json(rows.rows);
+}
+
+export async function addEmployee(req: StaffReq, res: Response): Promise<void> {
+  const staff = req.session?.staff as StaffSessionUser | undefined;
+  if (!staff) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const parsed = employeeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid payload" });
+    return;
+  }
+  const id = uuidv4();
+  const { employeeIdentifier, officialEmail } = parsed.data;
+  await pool.query(
+    `INSERT INTO org_employees (id, org_id, employee_identifier, official_email)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (org_id, employee_identifier)
+     DO UPDATE SET official_email = EXCLUDED.official_email`,
+    [id, staff.orgId, employeeIdentifier.trim(), officialEmail.trim().toLowerCase()]
+  );
+  res.status(201).json({ status: "ok" });
+}
+
+function parseEmployeeCsv(csvText: string): Array<{ employeeIdentifier: string; officialEmail: string }> {
+  const lines = csvText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return [];
+
+  const maybeHeader = lines[0].toLowerCase();
+  const start = maybeHeader.includes("employee") && maybeHeader.includes("email") ? 1 : 0;
+  const rows: Array<{ employeeIdentifier: string; officialEmail: string }> = [];
+
+  for (let i = start; i < lines.length; i += 1) {
+    const cols = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
+    if (cols.length < 2) continue;
+    rows.push({ employeeIdentifier: cols[0], officialEmail: cols[1] });
+  }
+  return rows;
+}
+
+export async function importEmployeesCsv(req: StaffReq, res: Response): Promise<void> {
+  const staff = req.session?.staff as StaffSessionUser | undefined;
+  if (!staff) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const parsed = bulkEmployeeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid payload" });
+    return;
+  }
+
+  const rows = parseEmployeeCsv(parsed.data.csvText);
+  if (!rows.length) {
+    res.status(400).json({ error: "CSV has no valid rows" });
+    return;
+  }
+
+  const accepted: string[] = [];
+  const rejected: Array<{ row: number; reason: string }> = [];
+
+  for (let i = 0; i < rows.length; i += 1) {
+    const one = employeeSchema.safeParse(rows[i]);
+    if (!one.success) {
+      rejected.push({ row: i + 1, reason: "Invalid employeeIdentifier or officialEmail" });
+      continue;
+    }
+    await pool.query(
+      `INSERT INTO org_employees (id, org_id, employee_identifier, official_email)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (org_id, employee_identifier)
+       DO UPDATE SET official_email = EXCLUDED.official_email`,
+      [uuidv4(), staff.orgId, one.data.employeeIdentifier.trim(), one.data.officialEmail.trim().toLowerCase()]
+    );
+    accepted.push(one.data.employeeIdentifier);
+  }
+
+  res.status(201).json({
+    status: "ok",
+    insertedOrUpdated: accepted.length,
+    rejected
   });
 }

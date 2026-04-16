@@ -16,7 +16,7 @@ export async function startEmployeeOtp(req: Request, res: Response): Promise<voi
   try {
     const result = await startOtpChallenge(parsed.data);
     // Intentionally do NOT return official email.
-    res.status(202).json({ challengeId: result.challengeId, status: "OTP_SENT" });
+    res.status(202).json({ challengeId: result.challengeId, status: "OTP_SENT", devOtp: result.devOtp });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }

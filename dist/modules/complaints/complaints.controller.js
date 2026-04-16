@@ -10,7 +10,8 @@ const evidenceStorage_service_1 = require("../../services/evidenceStorage.servic
 const encryptionPayload_1 = require("../../utils/encryptionPayload");
 const complaints_service_1 = require("./complaints.service");
 const complaintSchema = encryptionPayload_1.encryptedPayloadSchema.extend({
-    proof: zod_1.z.object({
+    proof: zod_1.z
+        .object({
         pi_a: zod_1.z.tuple([zod_1.z.string(), zod_1.z.string()]).or(zod_1.z.tuple([zod_1.z.string(), zod_1.z.string(), zod_1.z.string()])),
         pi_b: zod_1.z
             .tuple([zod_1.z.tuple([zod_1.z.string(), zod_1.z.string()]), zod_1.z.tuple([zod_1.z.string(), zod_1.z.string()])])
@@ -22,10 +23,11 @@ const complaintSchema = encryptionPayload_1.encryptedPayloadSchema.extend({
         pi_c: zod_1.z.tuple([zod_1.z.string(), zod_1.z.string()]).or(zod_1.z.tuple([zod_1.z.string(), zod_1.z.string(), zod_1.z.string()])),
         protocol: zod_1.z.string().optional(),
         curve: zod_1.z.string().optional()
-    }),
+    })
+        .optional(),
     category: zod_1.z.enum(["fraud", "harassment", "safety", "corruption", "other"]).default("other"),
-    nullifierHash: zod_1.z.string().min(1),
-    root: zod_1.z.string().min(1)
+    nullifierHash: zod_1.z.string().min(1).optional(),
+    root: zod_1.z.string().min(1).optional()
 });
 async function createComplaint(req, res) {
     const parsed = complaintSchema.safeParse(req.body);

@@ -22,6 +22,7 @@ export function StaffLayout() {
   const nav = useNavigate();
   const logout = useStaffLogout();
   const canSeeAnalytics = ["ORG_ADMIN", "HR", "MANAGER"].includes(staff?.role ?? "");
+  const isAdmin = staff?.role === "ORG_ADMIN";
 
   return (
     <div className="min-h-full bg-slate-50">
@@ -54,6 +55,7 @@ export function StaffLayout() {
             <div className="space-y-1">
               <SideLink to="/staff/dashboard" label="Dashboard" />
               {canSeeAnalytics ? <SideLink to="/staff/analytics" label="Analytics" /> : null}
+              {isAdmin ? <SideLink to="/staff/employees" label="Employees" /> : null}
             </div>
           </div>
           <div className="mt-4 rounded-xl border bg-white p-4 text-xs text-slate-600">

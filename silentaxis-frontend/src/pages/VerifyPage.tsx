@@ -8,7 +8,6 @@ import { useAuthStore } from "../store/authStore";
 import { useNavigate } from "react-router-dom";
 
 const startSchema = z.object({
-  orgId: z.string().uuid(),
   employeeIdentifier: z.string().min(3).max(320)
 });
 type StartForm = z.infer<typeof startSchema>;
@@ -22,13 +21,13 @@ export function VerifyPage() {
   const nav = useNavigate();
   const setAnon = useAuthStore((s) => s.setAnonymousToken);
   const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [devOtp, setDevOtp] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const startForm = useForm<StartForm>({
     resolver: zodResolver(startSchema),
     defaultValues: {
-      orgId: "11111111-1111-1111-1111-111111111111",
       employeeIdentifier: ""
     }
   });
@@ -65,21 +64,18 @@ export function VerifyPage() {
               setError(null);
               setStatus(null);
               try {
-                const r = await api.post<{ challengeId: string }>("/auth/verify-employee", v);
+                const r = await api.post<{ challengeId: string; devOtp?: string }>("/auth/verify-employee", {
+                  orgId: "11111111-1111-1111-1111-111111111111",
+                  employeeIdentifier: v.employeeIdentifier
+                });
                 setChallengeId(r.data.challengeId);
+                setDevOtp(r.data.devOtp ?? null);
                 setStatus("OTP sent. Check your official email.");
               } catch (e) {
                 setError((e as Error).message);
               }
             })}
           >
-            <div>
-              <Label>Organization ID</Label>
-              <Input {...startForm.register("orgId")} />
-              {startForm.formState.errors.orgId ? (
-                <div className="mt-1 text-xs text-rose-700">{startForm.formState.errors.orgId.message}</div>
-              ) : null}
-            </div>
             <div>
               <Label>Employee ID or email</Label>
               <Input placeholder="employee123 or employee123@company.com" {...startForm.register("employeeIdentifier")} />
@@ -115,6 +111,11 @@ export function VerifyPage() {
             <div className="text-sm text-slate-700">
               Enter the 6-digit OTP.
               <div className="mt-1 text-xs text-slate-500">Challenge: {challengeId}</div>
+              {devOtp ? (
+                <div className="mt-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+                  Dev OTP: {devOtp}
+                </div>
+              ) : null}
             </div>
             <div>
               <Label>OTP</Label>
@@ -132,6 +133,7 @@ export function VerifyPage() {
                 variant="secondary"
                 onClick={() => {
                   setChallengeId(null);
+                  setDevOtp(null);
                   otpForm.reset();
                 }}
               >

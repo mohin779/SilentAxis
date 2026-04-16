@@ -1,10 +1,13 @@
 import { Router } from "express";
 import { requireStaffRole, requireStaffSession } from "../../middleware/staffSession";
 import {
+  addEmployee,
   addUpdate,
   createExportJob,
   getAdminStats,
   getTimeline,
+  importEmployeesCsv,
+  listEmployees,
   listComplaints
 } from "./admin.controller";
 
@@ -29,6 +32,9 @@ adminRouter.post(
   addUpdate
 );
 adminRouter.post("/admin/export", requireStaffSession, requireStaffRole(["ORG_ADMIN"]), createExportJob);
+adminRouter.get("/admin/employees", requireStaffSession, requireStaffRole(["ORG_ADMIN"]), listEmployees);
+adminRouter.post("/admin/employees", requireStaffSession, requireStaffRole(["ORG_ADMIN"]), addEmployee);
+adminRouter.post("/admin/employees/import", requireStaffSession, requireStaffRole(["ORG_ADMIN"]), importEmployeesCsv);
 adminRouter.get(
   "/admin/stats",
   requireStaffSession,

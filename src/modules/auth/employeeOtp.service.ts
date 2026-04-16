@@ -5,6 +5,53 @@ import { pool } from "../../config/db";
 import { env } from "../../config/env";
 import { sha256 } from "../../utils/crypto/hashing";
 
+let otpSchemaEnsured = false;
+
+async function ensureOtpSchema(): Promise<void> {
+  if (otpSchemaEnsured) return;
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS org_employees (
+      id UUID PRIMARY KEY,
+      org_id UUID NOT NULL REFERENCES organizations(id),
+      employee_identifier TEXT NOT NULL,
+      official_email TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (org_id, employee_identifier)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS otp_challenges (
+      id UUID PRIMARY KEY,
+      org_id UUID NOT NULL REFERENCES organizations(id),
+      employee_identifier TEXT NOT NULL,
+      otp_hash TEXT NOT NULL,
+      attempts INT NOT NULL DEFAULT 0,
+      expires_at TIMESTAMPTZ NOT NULL,
+      verified_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS anonymous_tokens (
+      token_hash TEXT PRIMARY KEY,
+      org_id UUID NOT NULL REFERENCES organizations(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      uses_remaining INT NOT NULL DEFAULT 1
+    )
+  `);
+
+  await pool.query("CREATE INDEX IF NOT EXISTS otp_challenges_org_expires_idx ON otp_challenges (org_id, expires_at DESC)");
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS anonymous_tokens_org_expires_idx ON anonymous_tokens (org_id, expires_at DESC)"
+  );
+
+  otpSchemaEnsured = true;
+}
+
 function randomOtp6(): string {
   return String(crypto.randomInt(0, 1000000)).padStart(6, "0");
 }
@@ -41,7 +88,8 @@ async function sendOtpEmail(to: string, otp: string): Promise<void> {
 export async function startOtpChallenge(input: {
   orgId: string;
   employeeIdentifier: string;
-}): Promise<{ challengeId: string }> {
+}): Promise<{ challengeId: string; devOtp?: string }> {
+  await ensureOtpSchema();
   const employee = await pool.query(
     "SELECT official_email FROM org_employees WHERE org_id = $1 AND employee_identifier = $2",
     [input.orgId, input.employeeIdentifier]
@@ -59,10 +107,12 @@ export async function startOtpChallenge(input: {
   );
 
   await sendOtpEmail(employee.rows[0].official_email as string, otp);
-  return { challengeId };
+  const showDevOtp = process.env.DEV_SHOW_OTP === "true";
+  return showDevOtp ? { challengeId, devOtp: otp } : { challengeId };
 }
 
 export async function verifyOtpChallenge(challengeId: string, otp: string): Promise<boolean> {
+  await ensureOtpSchema();
   const row = await pool.query(
     "SELECT id, otp_hash, attempts, expires_at, verified_at FROM otp_challenges WHERE id = $1",
     [challengeId]
@@ -84,6 +134,7 @@ export async function verifyOtpChallenge(challengeId: string, otp: string): Prom
 }
 
 export async function issueAnonymousToken(challengeId: string): Promise<string> {
+  await ensureOtpSchema();
   // Read org_id but DO NOT store employee_identifier in token table.
   const row = await pool.query("SELECT org_id, verified_at FROM otp_challenges WHERE id = $1", [challengeId]);
   if (!row.rowCount) throw new Error("Challenge not found");
@@ -93,7 +144,7 @@ export async function issueAnonymousToken(challengeId: string): Promise<string> 
   const tokenHash = hashToken(token);
 
   await pool.query(
-    "INSERT INTO anonymous_tokens (token_hash, org_id, expires_at, uses_remaining) VALUES ($1,$2,NOW() + INTERVAL '30 minutes',1)",
+    "INSERT INTO anonymous_tokens (token_hash, org_id, expires_at, uses_remaining) VALUES ($1,$2,NOW() + INTERVAL '30 minutes',10)",
     [tokenHash, row.rows[0].org_id]
   );
 
@@ -104,6 +155,7 @@ export async function issueAnonymousToken(challengeId: string): Promise<string> 
 }
 
 export async function consumeAnonymousToken(token: string): Promise<{ orgId: string }> {
+  await ensureOtpSchema();
   const tokenHash = hashToken(token);
   const row = await pool.query(
     "SELECT token_hash, org_id, expires_at, uses_remaining FROM anonymous_tokens WHERE token_hash = $1",

@@ -9,6 +9,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { StaffDashboardPage } from "./pages/staff/StaffDashboardPage";
 import { StaffComplaintPage } from "./pages/staff/StaffComplaintPage";
 import { StaffAnalyticsPage } from "./pages/staff/StaffAnalyticsPage";
+import { EmployeeAdminPage } from "./pages/staff/EmployeeAdminPage";
 import { RequireAnonToken } from "./routes/RequireAnonToken";
 import { RequireStaff } from "./routes/RequireStaff";
 
@@ -42,7 +43,8 @@ export const router = createBrowserRouter([
     children: [
       { path: "dashboard", element: <StaffDashboardPage /> },
       { path: "complaint/:id", element: <StaffComplaintPage /> },
-      { path: "analytics", element: <StaffAnalyticsPage /> }
+      { path: "analytics", element: <StaffAnalyticsPage /> },
+      { path: "employees", element: <EmployeeAdminPage /> }
     ]
   }
 ]);

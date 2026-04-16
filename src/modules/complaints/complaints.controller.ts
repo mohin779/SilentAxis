@@ -9,24 +9,26 @@ import { encryptedPayloadSchema, validateEncryptedPayload } from "../../utils/en
 import { submitComplaint } from "./complaints.service";
 
 const complaintSchema = encryptedPayloadSchema.extend({
-  proof: z.object({
-    pi_a: z.tuple([z.string(), z.string()]).or(z.tuple([z.string(), z.string(), z.string()])),
-    pi_b: z
-      .tuple([z.tuple([z.string(), z.string()]), z.tuple([z.string(), z.string()])])
-      .or(
-        z.tuple([
-          z.tuple([z.string(), z.string()]),
-          z.tuple([z.string(), z.string()]),
-          z.tuple([z.string(), z.string()])
-        ])
-      ),
-    pi_c: z.tuple([z.string(), z.string()]).or(z.tuple([z.string(), z.string(), z.string()])),
-    protocol: z.string().optional(),
-    curve: z.string().optional()
-  }),
+  proof: z
+    .object({
+      pi_a: z.tuple([z.string(), z.string()]).or(z.tuple([z.string(), z.string(), z.string()])),
+      pi_b: z
+        .tuple([z.tuple([z.string(), z.string()]), z.tuple([z.string(), z.string()])])
+        .or(
+          z.tuple([
+            z.tuple([z.string(), z.string()]),
+            z.tuple([z.string(), z.string()]),
+            z.tuple([z.string(), z.string()])
+          ])
+        ),
+      pi_c: z.tuple([z.string(), z.string()]).or(z.tuple([z.string(), z.string(), z.string()])),
+      protocol: z.string().optional(),
+      curve: z.string().optional()
+    })
+    .optional(),
   category: z.enum(["fraud", "harassment", "safety", "corruption", "other"]).default("other"),
-  nullifierHash: z.string().min(1),
-  root: z.string().min(1)
+  nullifierHash: z.string().min(1).optional(),
+  root: z.string().min(1).optional()
 });
 
 export async function createComplaint(req: AuthRequest, res: Response): Promise<void> {

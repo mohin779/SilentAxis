@@ -19,9 +19,10 @@ exports.env = {
     s3Region: process.env.S3_REGION ?? "us-east-1",
     s3Bucket: process.env.S3_BUCKET ?? "",
     s3AccessKeyId: process.env.S3_ACCESS_KEY_ID ?? "",
-    s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? ""
+    s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
+    sessionSecret: process.env.SESSION_SECRET ?? process.env.JWT_SECRET ?? ""
 };
-if (!exports.env.databaseUrl || !exports.env.jwtSecret || !exports.env.encryptionKey) {
+if (!exports.env.databaseUrl || !exports.env.jwtSecret || !exports.env.encryptionKey || !exports.env.sessionSecret) {
     throw new Error("Missing required environment variables");
 }
 if (exports.env.encryptionKey.length !== 32) {

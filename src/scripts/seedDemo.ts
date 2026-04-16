@@ -2,6 +2,41 @@ import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
 import { pool } from "../config/db";
 
+async function ensureSeedCompatibility(): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS org_employees (
+      id UUID PRIMARY KEY,
+      org_id UUID NOT NULL REFERENCES organizations(id),
+      employee_identifier TEXT NOT NULL,
+      official_email TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (org_id, employee_identifier)
+    )
+  `);
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT");
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.table_constraints
+        WHERE constraint_schema = 'public'
+          AND table_name = 'users'
+          AND constraint_type = 'CHECK'
+          AND constraint_name = 'users_role_check'
+      ) THEN
+        ALTER TABLE users DROP CONSTRAINT users_role_check;
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    ALTER TABLE users
+      ADD CONSTRAINT users_role_check
+      CHECK (role IN ('EMPLOYEE', 'ORG_ADMIN', 'ORG_STAFF', 'HR', 'MANAGER', 'REGIONAL_OFFICER'))
+  `);
+}
+
 async function upsertOrg(): Promise<string> {
   const orgId = "11111111-1111-1111-1111-111111111111";
   await pool.query("INSERT INTO organizations (id, name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING", [
@@ -36,6 +71,7 @@ async function upsertEmployeeDirectory(params: { orgId: string; employeeIdentifi
 }
 
 async function main() {
+  await ensureSeedCompatibility();
   const orgId = await upsertOrg();
 
   // Staff demo credentials (session-based login).

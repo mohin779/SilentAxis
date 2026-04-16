@@ -51,7 +51,9 @@ app.use(
       secure: false, // set true behind HTTPS
       maxAge: 1000 * 60 * 60 * 2
     },
-    store: new RedisStore({ client: redis as any })
+    // Default to memory store for reliable local development.
+    // Set SESSION_STORE=redis to explicitly use Redis-backed sessions.
+    ...(process.env.SESSION_STORE === "redis" ? { store: new RedisStore({ client: redis as any }) } : {})
   })
 );
 
