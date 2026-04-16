@@ -1,6 +1,5 @@
 import { Router } from "express";
-import { requireAuth, requireRole } from "../../middleware/auth";
-import { enforceOrgIsolation } from "../../middleware/orgIsolation";
+import { requireStaffRole, requireStaffSession } from "../../middleware/staffSession";
 import {
   addUpdate,
   createExportJob,
@@ -13,12 +12,26 @@ export const adminRouter = Router();
 
 adminRouter.get(
   "/org/:orgId/complaints",
-  requireAuth,
-  enforceOrgIsolation,
-  requireRole(["ORG_ADMIN", "ORG_STAFF"]),
+  requireStaffSession,
+  requireStaffRole(["ORG_ADMIN", "ORG_STAFF", "HR", "MANAGER", "REGIONAL_OFFICER"]),
   listComplaints
 );
-adminRouter.get("/complaints/:id/timeline", requireAuth, requireRole(["ORG_ADMIN", "ORG_STAFF"]), getTimeline);
-adminRouter.post("/complaints/:id/update", requireAuth, requireRole(["ORG_ADMIN", "ORG_STAFF"]), addUpdate);
-adminRouter.post("/admin/export", requireAuth, requireRole(["ORG_ADMIN"]), createExportJob);
-adminRouter.get("/admin/stats", requireAuth, requireRole(["ORG_ADMIN", "ORG_STAFF"]), getAdminStats);
+adminRouter.get(
+  "/complaints/:id/timeline",
+  requireStaffSession,
+  requireStaffRole(["ORG_ADMIN", "ORG_STAFF", "HR", "MANAGER", "REGIONAL_OFFICER"]),
+  getTimeline
+);
+adminRouter.post(
+  "/complaints/:id/update",
+  requireStaffSession,
+  requireStaffRole(["ORG_ADMIN", "ORG_STAFF", "HR"]),
+  addUpdate
+);
+adminRouter.post("/admin/export", requireStaffSession, requireStaffRole(["ORG_ADMIN"]), createExportJob);
+adminRouter.get(
+  "/admin/stats",
+  requireStaffSession,
+  requireStaffRole(["ORG_ADMIN", "ORG_STAFF", "HR", "MANAGER", "REGIONAL_OFFICER"]),
+  getAdminStats
+);

@@ -1,0 +1,455 @@
+SilentAxis - Windows Step-by-Step Run Guide (Backend + Frontend)
+Generated: 2026-04-16
+
+This file tells you EXACTLY what to run, in which terminal, and how to login/test.
+
+----------------------------------------------------------------
+0) WHAT YOU NEED INSTALLED
+----------------------------------------------------------------
+- Node.js 18+ (recommended)
+- PostgreSQL (server + tools: psql OR pgAdmin)
+- Redis
+
+Optional:
+- SMTP credentials (only if you want OTP emails to actually arrive)
+
+----------------------------------------------------------------
+1) OPEN PROJECT FOLDER
+----------------------------------------------------------------
+Open PowerShell and go to:
+
+  cd "c:\Users\user\SilentAxis"
+
+----------------------------------------------------------------
+2) TERMINAL PLAN (USE MULTIPLE TERMINALS)
+----------------------------------------------------------------
+Terminal 1: Postgres (psql/pgAdmin work + connection tests)
+Terminal 2: Redis (redis-server output + redis-cli ping)
+Terminal 3: Backend (npm commands)
+Terminal 4: Quick API tests (curl / Invoke-RestMethod)
+Terminal 5: Frontend (Vite UI)
+
+You can also do everything in one terminal, but splitting makes it simpler.
+
+----------------------------------------------------------------
+3) START POSTGRES + REDIS
+----------------------------------------------------------------
+We are running BOTH as local installed services (no Docker).
+
+========================
+3A) Start PostgreSQL (local)
+========================
+Option 1 (Windows Services):
+- Press Win+R -> type: services.msc
+- Find a service like: postgresql-x64-XX
+- Right click -> Start
+
+Option 2 (pgAdmin):
+- Open pgAdmin
+- Connect to your server (it typically starts automatically if installed as a service)
+
+Quick verify Postgres is reachable (Terminal 1):
+
+  psql -h localhost -U postgres -d postgres -c "SELECT now();"
+
+========================
+3B) Start Redis (local)
+========================
+How Redis starts depends on how you installed it:
+
+Option 1 (Redis as a Windows service):
+- Press Win+R -> services.msc
+- Find "Redis" / "Redis Server" -> Start
+
+Option 2 (Redis server command):
+- Open a terminal where redis-server is available and run:
+    redis-server
+
+Quick verify Redis is reachable (Terminal 2):
+
+  redis-cli ping
+
+Expected:
+  PONG
+
+Connection defaults used by this project:
+- Postgres: localhost:5432 (user: postgres, password: postgres)
+- Redis: localhost:6379
+
+----------------------------------------------------------------
+4) CREATE/UPDATE THE DATABASE SCHEMA
+----------------------------------------------------------------
+The schema file is:
+
+  src\db\schema.sql
+
+You must apply it to the "silentaxis" database.
+
+========================
+Option A) Apply schema using psql (local)
+========================
+
+Terminal 1 (or any terminal where psql works):
+
+  psql "postgres://postgres:postgres@localhost:5432/silentaxis" -f "src\db\schema.sql"
+
+========================
+Option B) Apply schema using pgAdmin
+========================
+- Open pgAdmin
+- Connect to the Postgres server
+- Select database "silentaxis" (create it if missing)
+- Open Query Tool
+- Paste the content of src\db\schema.sql and run it
+
+----------------------------------------------------------------
+5) CREATE .env FILE
+----------------------------------------------------------------
+In the project root:
+
+  Copy ".env.example" to ".env"
+
+Minimum required values (typical local setup):
+
+  PORT=4000
+  DATABASE_URL=postgres://postgres:postgres@localhost:5432/silentaxis
+  JWT_SECRET=change_me_very_long_secret
+  SESSION_SECRET=change_me_very_long_secret
+  ENCRYPTION_KEY_32=0123456789abcdef0123456789abcdef    (MUST be exactly 32 chars)
+  REDIS_URL=redis://localhost:6379
+  CORS_ORIGIN=http://localhost:3000
+  ENCRYPTION_KEY_VERSION=v1
+  STORAGE_DRIVER=local
+
+SMTP (ONLY if you want OTP codes emailed):
+
+  SMTP_HOST=...
+  SMTP_PORT=587
+  SMTP_USER=...
+  SMTP_PASS=...
+  SMTP_FROM=no-reply@silentaxis.local
+
+Important:
+- If SMTP_HOST is empty, OTP is treated as “sent”, but no email is actually sent.
+
+----------------------------------------------------------------
+6) INSTALL NODE DEPENDENCIES
+----------------------------------------------------------------
+Terminal 3:
+
+  cd "c:\Users\user\SilentAxis"
+  npm install
+
+----------------------------------------------------------------
+7) SEED DEMO DATA (CREATES USERS + EMPLOYEE DIRECTORY)
+----------------------------------------------------------------
+This is strongly recommended so you have working login credentials.
+
+Terminal 3:
+
+  npm run seed:demo
+
+This seeds:
+- Organization: "Acme Corp" with orgId 11111111-1111-1111-1111-111111111111
+- Staff users (email/password):
+    admin@acme.com      / AdminPass!123
+    hr@acme.com         / HrPass!123
+    manager1@acme.com   / ManagerPass!123
+    manager2@acme.com   / ManagerPass!123
+    manager3@acme.com   / ManagerPass!123
+    regional@acme.com   / RegionalPass!123
+- Employee directory (for OTP routing):
+    employeeIdentifier "employee123" -> employee123@acme.com
+    employeeIdentifier "employee456" -> employee456@acme.com
+
+----------------------------------------------------------------
+8) RUN THE BACKEND
+----------------------------------------------------------------
+DEV mode (recommended while developing):
+
+Terminal 3:
+
+  npm run dev
+
+Expected:
+- Server starts on http://localhost:4000
+- Background workers start (export worker, evidence scan worker)
+
+Production-like:
+
+Terminal 3:
+
+  npm run build
+  npm start
+
+----------------------------------------------------------------
+9) QUICK HEALTH CHECK
+----------------------------------------------------------------
+Terminal 4:
+
+  curl http://localhost:4000/health
+
+Expected:
+  {"status":"ok"}
+
+If curl is not available, PowerShell alternative:
+
+  Invoke-RestMethod -Uri "http://localhost:4000/health" -Method GET
+
+----------------------------------------------------------------
+10) LOGIN OPTIONS (IMPORTANT: THERE ARE TWO LOGIN STYLES)
+----------------------------------------------------------------
+
+========================
+10A) Mock SSO JWT login (NO password)
+========================
+Endpoint: POST /auth/login
+Allowed emails (hardcoded):
+- employee@acme.com
+- admin@acme.com
+- staff@acme.com
+
+Terminal 4 (PowerShell):
+
+  $body = @{ email = "admin@acme.com" } | ConvertTo-Json
+  Invoke-RestMethod -Uri "http://localhost:4000/auth/login" -Method POST -ContentType "application/json" -Body $body
+
+Response:
+  { "token": "..." }
+
+Use this token as:
+  Authorization: Bearer <token>
+
+========================
+10B) Staff session login (email + password, stored in DB)
+========================
+Endpoint: POST /staff-auth/login
+Requires seeded users (see step 7).
+
+This login sets a session cookie (silentaxis.sid).
+To test with curl you must store cookies:
+
+Terminal 4:
+
+  curl -c cookies.txt -H "Content-Type: application/json" ^
+    -d "{\"email\":\"admin@acme.com\",\"password\":\"AdminPass!123\"}" ^
+    http://localhost:4000/staff-auth/login
+
+Then verify who you are:
+
+  curl -b cookies.txt http://localhost:4000/staff-auth/me
+
+Logout:
+
+  curl -b cookies.txt -X POST http://localhost:4000/staff-auth/logout
+
+----------------------------------------------------------------
+11) OTP / EMAIL VERIFICATION FLOW (EMPLOYEE -> ANONYMOUS TOKEN)
+----------------------------------------------------------------
+This flow verifies the employeeIdentifier against org_employees and sends a 6-digit OTP to the official email.
+
+Step 1: Start OTP
+Endpoint: POST /auth/verify-employee
+
+Terminal 4 (PowerShell):
+
+  $body = @{ orgId="11111111-1111-1111-1111-111111111111"; employeeIdentifier="employee123" } | ConvertTo-Json
+  Invoke-RestMethod -Uri "http://localhost:4000/auth/verify-employee" -Method POST -ContentType "application/json" -Body $body
+
+Response:
+  { challengeId: "...", status: "OTP_SENT" }
+
+Step 2: Verify OTP and receive anonymous token
+Endpoint: POST /auth/verify-otp
+
+  $body = @{ challengeId="PASTE_CHALLENGE_ID"; otp="PASTE_6_DIGITS" } | ConvertTo-Json
+  Invoke-RestMethod -Uri "http://localhost:4000/auth/verify-otp" -Method POST -ContentType "application/json" -Body $body
+
+Response:
+  { token: "...", tokenType: "ANON_TOKEN", expiresInSeconds: 1800 }
+
+Notes:
+- If SMTP_HOST is not set, emails are not actually sent.
+- The DB deletes the OTP challenge after issuing the anonymous token (privacy feature).
+
+----------------------------------------------------------------
+12) NEXT FLOW (HIGH LEVEL): IDENTITY -> COMPLAINT -> EVIDENCE -> REPORTER CHAT
+----------------------------------------------------------------
+1) Identity registration
+   - POST /identity/register
+   - Requires Authorization: Bearer <JWT token> (from /auth/login)
+   - Returns { secret, commitment, leafIndex, root }
+
+2) Submit complaint
+   - POST /complaints
+   - Requires Authorization: Bearer <JWT token>
+   - Payload must include encryptedComplaint + Groth16 proof + root + nullifierHash
+
+3) Upload encrypted evidence
+   - POST /complaints/:id/evidence
+   - Requires Authorization: Bearer <JWT token>
+   - Stores encrypted file via STORAGE_DRIVER and queues an async scan
+
+4) Reporter access/messages (complaintId + secret)
+   - /reporter endpoints allow an encrypted message channel tied to complaintId
+
+----------------------------------------------------------------
+14) FRONTEND (UI) - HOW TO RUN + CLICK-BY-CLICK FLOW
+----------------------------------------------------------------
+The frontend lives in:
+
+  c:\Users\user\SilentAxis\silentaxis-frontend
+
+It is a Vite + React app that talks to the backend at:
+  http://localhost:4000
+
+========================
+14A) Install frontend dependencies
+========================
+Terminal 5:
+
+  cd "c:\Users\user\SilentAxis\silentaxis-frontend"
+  npm install
+
+========================
+14B) Run the frontend dev server
+========================
+Terminal 5:
+
+  npm run dev
+
+Open in browser (Vite typically prints the exact URL):
+- Usually: http://localhost:5173
+
+IMPORTANT:
+- Backend must be running first (step 8).
+- Backend CORS allows http://localhost:3000 by default in .env.example.
+  If your Vite runs on :5173, update .env:
+    CORS_ORIGIN=http://localhost:5173
+  Then restart the backend.
+
+========================
+14C) UI pages you can access
+========================
+Public (employee / reporter side):
+- /verify   (OTP verification -> anonymous token)
+- /report   (complaint submission UI)  [requires anon token]
+- /status   (status page)
+
+Staff portal:
+- /staff/login
+- /staff/dashboard
+- /staff/complaint/<id>
+- /staff/analytics
+
+========================
+14D) Employee flow (frontend)
+========================
+Step 1: Verify employee anonymously
+- Open: /verify
+- Enter:
+    Organization ID: 11111111-1111-1111-1111-111111111111
+    Employee ID/email: employee123   (seeded by step 7)
+- Click: "Send OTP"
+- Check email for OTP (only if SMTP_HOST is configured)
+- Enter OTP and click: "Verify OTP"
+- You will be redirected to: /report
+
+What is generated here?
+- The UI receives an "ANON_TOKEN" from the backend and keeps it in memory only.
+- This token is sent to the backend as:
+    Authorization: Bearer <anon_token>
+  but only for requests that require it.
+
+Step 2: Submit complaint
+- On /report, fill in the visible fields (Category, Title, Description, etc.)
+- IMPORTANT: The backend requires a ZK bundle:
+    - Merkle root
+    - nullifierHash
+    - encryptedComplaint (+ optional encryptedKey)
+    - Groth16 proof JSON
+
+Reality check (current implementation):
+- The UI does NOT generate the ZK proof for you.
+- You must paste the values (from your proof generation flow).
+
+Step 3: Evidence upload (optional)
+- Choose a file (max 5MB in this UI)
+- On submit, the UI also calls:
+    POST /complaints/<complaintId>/evidence
+  NOTE: the current UI sends file bytes as a placeholder “encrypted” payload.
+
+After submission, the UI shows:
+- Complaint ID (this is the ID you share with staff to locate the complaint)
+- Complaint hash (tamper-evidence / audit chain support)
+
+========================
+14E) Staff/admin flow (frontend)
+========================
+Step 1: Staff login
+- Open: /staff/login
+- Use seeded credentials (from step 7), for example:
+    admin@acme.com / AdminPass!123
+    hr@acme.com / HrPass!123
+    manager1@acme.com / ManagerPass!123
+    regional@acme.com / RegionalPass!123
+- Click: "Sign in"
+
+What happens on login?
+- Backend sets a session cookie: silentaxis.sid (stored server-side in Redis)
+- Frontend uses that cookie automatically (axios withCredentials=true)
+
+Step 2: Staff dashboard list
+- You land on: /staff/dashboard
+- You can filter by category
+- Click any complaint ID to open the complaint page
+
+Step 3: Complaint timeline + updates
+- Open: /staff/complaint/<id>
+- You will see the timeline (append-only messages)
+- Role permissions in UI/backend:
+    - ORG_ADMIN / ORG_STAFF / HR: can add updates + change status
+    - MANAGER / REGIONAL_OFFICER: read-only view (cannot update)
+
+Step 4: Escalation (what exists today)
+Escalation is AUTOMATIC (system worker runs every 60 seconds):
+- TIMEOUT_48H: if complaint still SUBMITTED after 48 hours
+- PATTERN_MATCH: if same org + same category has >= 3 complaints in 30 days (escalates newest)
+
+How do you see escalation in the UI?
+- It appears as a timeline entry like:
+    "System auto-escalation triggered (no action within 48 hours)."
+  and the UI shows an "AUTO ESCALATED" badge for system escalation messages.
+
+Step 5: Approval / manager / HR resolution (what is implemented vs not)
+Implemented:
+- HR/ORG_ADMIN/ORG_STAFF can set complaint_status to:
+    UNDER_REVIEW, INVESTIGATING, RESOLVED, DISMISSED
+  and add timeline messages.
+
+Not implemented as separate workflow (yet):
+- There is NO dedicated “approval” endpoint or multi-step approval chain UI.
+- Managers/regional officers can VIEW but cannot approve/change status in current code.
+
+----------------------------------------------------------------
+15) TROUBLESHOOTING QUICK CHECKLIST
+----------------------------------------------------------------
+- /health not responding:
+  - backend not running, or PORT in .env not correct
+
+- DB errors:
+  - DATABASE_URL incorrect
+  - database "silentaxis" not created
+  - schema.sql not applied
+  - Postgres service not started (port 5432)
+
+- Redis errors:
+  - Redis not running
+  - REDIS_URL incorrect
+  - redis-cli ping does not return PONG
+
+- OTP not arriving:
+  - SMTP_HOST not set OR SMTP creds wrong
+
+End of file.
+

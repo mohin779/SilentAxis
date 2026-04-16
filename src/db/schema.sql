@@ -7,7 +7,43 @@ CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY,
   org_id UUID NOT NULL REFERENCES organizations(id),
   email TEXT NOT NULL UNIQUE,
-  role TEXT NOT NULL CHECK (role IN ('EMPLOYEE', 'ORG_ADMIN', 'ORG_STAFF'))
+  role TEXT NOT NULL CHECK (role IN ('EMPLOYEE', 'ORG_ADMIN', 'ORG_STAFF', 'HR', 'MANAGER', 'REGIONAL_OFFICER')),
+  password_hash TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Organization directory used ONLY for OTP routing.
+-- This table is the only place where employee identifiers map to official emails.
+-- Complaints never reference this table.
+CREATE TABLE IF NOT EXISTS org_employees (
+  id UUID PRIMARY KEY,
+  org_id UUID NOT NULL REFERENCES organizations(id),
+  employee_identifier TEXT NOT NULL, -- employee id OR email entered by employee
+  official_email TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (org_id, employee_identifier)
+);
+
+-- Short-lived OTP challenges. Does NOT grant access to complaints directly.
+CREATE TABLE IF NOT EXISTS otp_challenges (
+  id UUID PRIMARY KEY,
+  org_id UUID NOT NULL REFERENCES organizations(id),
+  employee_identifier TEXT NOT NULL,
+  otp_hash TEXT NOT NULL,
+  attempts INT NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL,
+  verified_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Anonymous access tokens issued after OTP verification.
+-- IMPORTANT: no employee identity is stored here.
+CREATE TABLE IF NOT EXISTS anonymous_tokens (
+  token_hash TEXT PRIMARY KEY,
+  org_id UUID NOT NULL REFERENCES organizations(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  uses_remaining INT NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS identity_commitments (
@@ -66,7 +102,23 @@ CREATE TABLE IF NOT EXISTS org_audit_logs (
   actor_id TEXT,
   action TEXT NOT NULL CHECK (action IN ('VIEW_TIMELINE', 'UPDATE_COMPLAINT', 'EXPORT_DATA')),
   complaint_id UUID,
-  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  previous_hash TEXT,
+  hash TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS org_audit_logs_org_time_idx ON org_audit_logs (org_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS otp_challenges_org_expires_idx ON otp_challenges (org_id, expires_at DESC);
+CREATE INDEX IF NOT EXISTS anonymous_tokens_org_expires_idx ON anonymous_tokens (org_id, expires_at DESC);
+
+-- Escalation tracking (bias control automation).
+CREATE TABLE IF NOT EXISTS complaint_escalations (
+  id UUID PRIMARY KEY,
+  complaint_id UUID NOT NULL REFERENCES complaints(id),
+  org_id UUID NOT NULL REFERENCES organizations(id),
+  reason TEXT NOT NULL CHECK (reason IN ('TIMEOUT_48H', 'PATTERN_MATCH')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (complaint_id, reason)
 );
 
 CREATE TABLE IF NOT EXISTS export_jobs (

@@ -1,6 +1,8 @@
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
+import session from "express-session";
+import { RedisStore } from "connect-redis";
 import { env } from "./config/env";
 import { authRouter } from "./modules/auth/auth.routes";
 import { identityRouter } from "./modules/identity/identity.routes";
@@ -11,6 +13,8 @@ import { errorHandler } from "./middleware/errorHandler";
 import { requestAuditLog } from "./middleware/requestAuditLog";
 import { torHeaders } from "./middleware/torHeaders";
 import { reporterRouter } from "./modules/reporter/reporter.routes";
+import { redis } from "./config/redis";
+import { staffAuthRouter } from "./modules/staffAuth/staffAuth.routes";
 
 export const app = express();
 
@@ -27,7 +31,7 @@ app.use(
   cors({
     origin: env.corsOrigin,
     methods: ["GET", "POST"],
-    credentials: false
+    credentials: true
   })
 );
 app.use(express.json({ limit: "5mb" }));
@@ -35,11 +39,28 @@ app.use(apiRateLimit);
 app.use(torHeaders);
 app.use(requestAuditLog);
 
+app.use(
+  session({
+    name: "silentaxis.sid",
+    secret: env.sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false, // set true behind HTTPS
+      maxAge: 1000 * 60 * 60 * 2
+    },
+    store: new RedisStore({ client: redis as any })
+  })
+);
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
 app.use("/auth", authRouter);
+app.use("/staff-auth", staffAuthRouter);
 app.use("/identity", identityRouter);
 app.use("/complaints", complaintsRouter);
 app.use("/reporter", reporterRouter);
