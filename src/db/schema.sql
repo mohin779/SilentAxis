@@ -12,6 +12,32 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Backward-compatible migration for older databases where users table
+-- was created before password_hash/created_at/new roles existed.
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS password_hash TEXT;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.table_constraints
+    WHERE constraint_schema = 'public'
+      AND table_name = 'users'
+      AND constraint_type = 'CHECK'
+      AND constraint_name = 'users_role_check'
+  ) THEN
+    ALTER TABLE users DROP CONSTRAINT users_role_check;
+  END IF;
+END $$;
+
+ALTER TABLE users
+  ADD CONSTRAINT users_role_check
+  CHECK (role IN ('EMPLOYEE', 'ORG_ADMIN', 'ORG_STAFF', 'HR', 'MANAGER', 'REGIONAL_OFFICER'));
+
 -- Organization directory used ONLY for OTP routing.
 -- This table is the only place where employee identifiers map to official emails.
 -- Complaints never reference this table.

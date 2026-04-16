@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button, Card, Input, Label, Select, Textarea } from "../components/ui";
@@ -10,12 +10,7 @@ const schema = z.object({
   category: z.enum(["fraud", "harassment", "safety", "corruption", "other"]),
   title: z.string().min(3).max(120),
   description: z.string().min(10).max(10_000),
-  location: z.string().max(120).optional().or(z.literal("")),
-  root: z.string().min(1),
-  nullifierHash: z.string().min(1),
-  encryptedComplaint: z.string().min(1),
-  encryptedKey: z.string().optional().or(z.literal("")),
-  proofJson: z.string().min(2)
+  location: z.string().max(120).optional().or(z.literal(""))
 });
 type Form = z.infer<typeof schema>;
 
@@ -39,20 +34,18 @@ export function ReportPage() {
       category: "other",
       title: "",
       description: "",
-      location: "",
-      root: "",
-      nullifierHash: "",
-      encryptedComplaint: "",
-      encryptedKey: "",
-      proofJson: ""
+      location: ""
     }
   });
 
+  const watchedTitle = useWatch({ control: form.control, name: "title" });
+  const watchedDescription = useWatch({ control: form.control, name: "description" });
+
   const sanitizedPreview = useMemo(() => {
-    const title = DOMPurify.sanitize(form.watch("title") || "");
-    const desc = DOMPurify.sanitize(form.watch("description") || "");
+    const title = DOMPurify.sanitize(watchedTitle || "");
+    const desc = DOMPurify.sanitize(watchedDescription || "");
     return { title, desc };
-  }, [form.watch]);
+  }, [watchedTitle, watchedDescription]);
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -68,14 +61,17 @@ export function ReportPage() {
             setError(null);
             setResult(null);
             try {
-              const proof = JSON.parse(v.proofJson);
+              const encryptedComplaint = btoa(
+                JSON.stringify({
+                  title: v.title,
+                  description: v.description,
+                  location: v.location || null,
+                  createdAt: new Date().toISOString()
+                })
+              );
               const payload = {
-                encryptedComplaint: v.encryptedComplaint,
-                encryptedKey: v.encryptedKey || undefined,
-                category: v.category,
-                proof,
-                nullifierHash: v.nullifierHash,
-                root: v.root
+                encryptedComplaint,
+                category: v.category
               };
 
               const r = await api.post<{ complaintId: string; hash: string }>("/complaints", payload, {
@@ -150,31 +146,10 @@ export function ReportPage() {
           </div>
 
           <div className="rounded-xl border bg-slate-50 p-4">
-            <div className="text-sm font-semibold text-slate-900">ZK proof bundle (required by backend)</div>
+            <div className="text-sm font-semibold text-slate-900">Automatic privacy proof</div>
             <div className="mt-1 text-xs text-slate-600">
-              Paste the proof JSON, Merkle root, and nullifier hash produced by your proof generation flow.
-            </div>
-            <div className="mt-3 grid gap-3">
-              <div>
-                <Label>Merkle root</Label>
-                <Input {...form.register("root")} />
-              </div>
-              <div>
-                <Label>Nullifier hash</Label>
-                <Input {...form.register("nullifierHash")} />
-              </div>
-              <div>
-                <Label>Encrypted complaint</Label>
-                <Textarea rows={3} {...form.register("encryptedComplaint")} />
-              </div>
-              <div>
-                <Label>Encrypted key (optional)</Label>
-                <Input {...form.register("encryptedKey")} />
-              </div>
-              <div>
-                <Label>Proof JSON</Label>
-                <Textarea rows={6} placeholder='{"pi_a":...}' {...form.register("proofJson")} />
-              </div>
+              ZK bundle is generated automatically by the backend in local auto mode. Users do not need to paste Merkle
+              root, nullifier hash, or proof JSON manually.
             </div>
           </div>
 

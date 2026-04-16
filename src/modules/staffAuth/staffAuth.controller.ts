@@ -15,7 +15,22 @@ export async function loginStaff(req: Request, res: Response): Promise<void> {
   }
   try {
     const staff = await staffLogin(parsed.data.email, parsed.data.password);
-    (req as any).session.staff = staff;
+    if (!(req as any).session) {
+      res.status(503).json({ error: "Session service unavailable" });
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      (req as any).session.staff = staff;
+      (req as any).session.save((saveErr: unknown) => {
+        if (saveErr) {
+          reject(saveErr);
+          return;
+        }
+        resolve();
+      });
+    });
+
     res.json({ status: "ok" });
   } catch (e) {
     res.status(401).json({ error: (e as Error).message });

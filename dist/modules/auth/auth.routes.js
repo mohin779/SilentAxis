@@ -3,5 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.authRouter = void 0;
 const express_1 = require("express");
 const auth_controller_1 = require("./auth.controller");
+const employeeOtp_controller_1 = require("./employeeOtp.controller");
 exports.authRouter = (0, express_1.Router)();
 exports.authRouter.post("/login", auth_controller_1.login);
+exports.authRouter.post("/verify-employee", employeeOtp_controller_1.startEmployeeOtp);
+exports.authRouter.post("/verify-otp", employeeOtp_controller_1.verifyEmployeeOtp);

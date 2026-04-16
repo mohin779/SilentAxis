@@ -1,153 +1,261 @@
-SilentAxis Backend - Step-by-Step Run Guide
-Generated on: 2026-04-14
+SilentAxis - Clear Step-by-Step Run Guide (Backend + Frontend)
+Last updated: 2026-04-14
+
+Use this exact order. Do not skip steps.
+
+================================================================
+0) WHAT YOU WILL RUN
+================================================================
+You will run:
+1) PostgreSQL
+2) Redis
+3) Backend (http://localhost:4000)
+4) Frontend (http://localhost:3000)
+
+Detailed description of each:
+
+1) PostgreSQL (Primary database)
+- What it is:
+  PostgreSQL is the main persistent database for SilentAxis.
+- Why it is required:
+  The backend stores organizations, users/roles, employee directory mapping
+  (for OTP routing), complaints, complaint updates, audit logs, escalations,
+  and reporter messaging metadata in PostgreSQL.
+- What happens if it is not running:
+  Backend startup or API requests fail with database connection errors.
+- What to verify:
+  - DATABASE_URL in .env points to a valid database
+  - src/db/schema.sql has been executed
+  - You can connect from your DB client (pgAdmin/psql)
+
+2) Redis (Session + runtime support store)
+- What it is:
+  Redis is an in-memory key-value store used by backend runtime features.
+- Why it is required:
+  SilentAxis uses Redis for staff session storage and device-binding/runtime
+  checks. Without Redis, session-dependent flows will break.
+- What happens if it is not running:
+  Staff login/session validation can fail; middleware may return service errors.
+- What to verify:
+  - REDIS_URL in .env is correct
+  - Redis process/service is active
+  - Backend logs do not show Redis connection failures
+
+3) Backend (http://localhost:4000)
+- What it is:
+  The Node.js + Express API server containing all business logic/security
+  controls.
+- What it does:
+  - Handles OTP verification and anonymous token issuance
+  - Accepts complaint submissions and evidence upload endpoints
+  - Enforces role-based staff access
+  - Runs escalation automation and audit-chain logging logic
+- Why it is required:
+  Frontend is only a client UI; all secure operations happen in backend APIs.
+- What to verify:
+  - Start with: npm run dev (from c:\Users\user\SilentAxis)
+  - Health endpoint returns: {"status":"ok"} at /health
+  - Console shows backend listening on port 4000
+
+4) Frontend (http://localhost:3000)
+- What it is:
+  The React + TypeScript web application used by reporters and staff users.
+- What it does:
+  - Reporter flow: /verify -> /report -> /status
+  - Staff flow: /staff/login -> /staff/dashboard -> /staff/analytics
+  - Sends requests to backend at http://localhost:4000
+- Why it is required:
+  This is the user-facing interface for all workflows.
+- What to verify:
+  - Start with: npm run dev (from c:\Users\user\SilentAxis\silentaxis-frontend)
+  - Browser opens successfully at http://localhost:3000
+  - Actions in UI trigger API calls without CORS/network errors
 
 ================================================================
 1) PREREQUISITES
 ================================================================
-Install these first:
-- Node.js 18+ (recommended)
+Install first:
+- Node.js 18+ (Node 20+ recommended)
 - npm
-- PostgreSQL (running)
-- Redis (running)
+- PostgreSQL (must be running)
+- Redis (must be running)
 
-Optional for S3 storage mode:
-- S3-compatible bucket/service (AWS S3, MinIO, etc.)
-
-Optional for ZK compile/proof generation:
-- circom
-- snarkjs
-
+Optional:
+- S3-compatible storage (only if STORAGE_DRIVER=s3)
+- circom + snarkjs (only for ZK compile/proof work)
 
 ================================================================
 2) OPEN PROJECT
 ================================================================
-In terminal:
+Terminal command:
 1) cd "c:\Users\user\SilentAxis"
 
-
 ================================================================
-3) INSTALL DEPENDENCIES
+3) INSTALL BACKEND DEPENDENCIES
 ================================================================
 Run:
 1) npm install
 
-
 ================================================================
-4) CONFIGURE ENV FILE
+4) CONFIGURE BACKEND ENV
 ================================================================
-1) Copy .env.example to .env
-2) Update values in .env
+1) Copy .env.example -> .env
+2) Ensure these values exist in .env:
 
-Minimum required values:
 - PORT=4000
 - DATABASE_URL=postgres://postgres:postgres@localhost:5432/silentaxis
-- JWT_SECRET=<your_secret>
+- JWT_SECRET=<long_secret>
+- SESSION_SECRET=<long_secret>
 - ENCRYPTION_KEY_32=<exactly_32_characters>
 - REDIS_URL=redis://localhost:6379
 - CORS_ORIGIN=http://localhost:3000
 - ENCRYPTION_KEY_VERSION=v1
 - STORAGE_DRIVER=local
 
-If using STORAGE_DRIVER=s3, also set:
+If STORAGE_DRIVER=s3, also set:
 - S3_ENDPOINT
 - S3_REGION
 - S3_BUCKET
 - S3_ACCESS_KEY_ID
 - S3_SECRET_ACCESS_KEY
 
+Optional for OTP email:
+- SMTP_HOST
+- SMTP_PORT
+- SMTP_USER
+- SMTP_PASS
+- SMTP_FROM
 
 ================================================================
-5) CREATE DATABASE SCHEMA
+5) CREATE DATABASE TABLES
 ================================================================
-Apply schema file:
-1) Open PostgreSQL client (psql/pgAdmin/DB tool)
-2) Run SQL from:
-   src/db/schema.sql
+Run SQL from:
+1) src/db/schema.sql
 
-This creates all required tables and triggers.
-
-
-================================================================
-6) START REQUIRED SERVICES
-================================================================
-Make sure these are running:
-1) PostgreSQL
-2) Redis
-
+How:
+- Open pgAdmin/psql/DB tool
+- Execute full file src/db/schema.sql
 
 ================================================================
-7) RUN THE BACKEND (DEV MODE)
+6) SEED DEMO USERS + EMPLOYEE DIRECTORY
+================================================================
+Run:
+1) npm run seed:demo
+
+This creates demo staff users and employee identifiers for OTP flow.
+
+Demo staff credentials:
+- admin@acme.com / AdminPass!123
+- hr@acme.com / HrPass!123
+- manager1@acme.com / ManagerPass!123
+- manager2@acme.com / ManagerPass!123
+- manager3@acme.com / ManagerPass!123
+- regional@acme.com / RegionalPass!123
+
+================================================================
+7) START BACKEND (TERMINAL 1)
 ================================================================
 Run:
 1) npm run dev
 
-Expected behavior on successful startup:
-- cleanup worker runs
-- ZK verification key is initialized
-- export worker starts
-- evidence scan worker starts
-- server log prints:
-  SilentAxis backend running on port <PORT>
+Expected success log:
+- SilentAxis backend running on port 4000
 
+Quick health check:
+- Open: http://localhost:4000/health
+- Expect: {"status":"ok"}
 
 ================================================================
-8) QUICK HEALTH CHECK
+8) INSTALL FRONTEND DEPENDENCIES
 ================================================================
-Test API:
-1) GET http://localhost:4000/health
-
-Expected response:
-- {"status":"ok"}
-
+Open TERMINAL 2:
+1) cd "c:\Users\user\SilentAxis\silentaxis-frontend"
+2) npm install
 
 ================================================================
-9) OPTIONAL: RUN TESTS
+9) START FRONTEND (TERMINAL 2)
 ================================================================
 Run:
+1) npm run dev
+
+Expected:
+- Vite starts on http://localhost:3000
+
+================================================================
+10) QUICK END-TO-END TEST FLOW
+================================================================
+A) Anonymous reporter flow:
+1) Open http://localhost:3000/verify
+2) Enter:
+   - orgId: 11111111-1111-1111-1111-111111111111
+   - employeeIdentifier: employee123
+3) Submit OTP challenge
+4) Enter OTP (from configured email flow)
+5) You should be redirected to /report
+
+B) Staff flow:
+1) Open http://localhost:3000/staff/login
+2) Login with one seeded user (example: hr@acme.com / HrPass!123)
+3) Open dashboard and analytics pages
+
+================================================================
+11) OPTIONAL COMMANDS
+================================================================
+Backend tests:
 1) npm test
 
-
-================================================================
-10) OPTIONAL: BUILD + RUN PRODUCTION MODE
-================================================================
-Build:
+Backend build:
 1) npm run build
-
-Run compiled app:
 2) npm start
 
-
-================================================================
-11) OPTIONAL: ZK TOOLING COMMANDS
-================================================================
-Compile circuit and export verification key:
+ZK tooling:
 1) npm run zk:compile
-
-Generate proof using script:
 2) npm run zk:proof
 
-Note:
-- Runtime complaint verification expects a valid
-  zk/build/verification_key.json
-
-
 ================================================================
-12) COMMON ISSUES AND FIXES
+12) MOST COMMON FAILURES (FAST FIXES)
 ================================================================
 Issue: "Missing required environment variables"
-- Fix: Check DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY_32 in .env
+Fix:
+- Recheck .env has DATABASE_URL, JWT_SECRET, SESSION_SECRET, ENCRYPTION_KEY_32
 
 Issue: "ENCRYPTION_KEY_32 must be exactly 32 chars"
-- Fix: Provide exactly 32 characters
+Fix:
+- Use exactly 32 characters (no spaces, no quotes)
 
-Issue: Redis errors / device binding unavailable
-- Fix: Ensure REDIS_URL is correct and Redis is running
+Issue: Redis/session errors
+Fix:
+- Ensure Redis is running and REDIS_URL is correct
 
-Issue: DB connection failures
-- Fix: Verify PostgreSQL is up and DATABASE_URL is valid
+Issue: DB connection failure
+Fix:
+- Ensure PostgreSQL is running
+- Ensure DATABASE_URL points to existing database
 
-Issue: ZK verification fails
-- Fix: Ensure proof/public signals match current circuit and verification key
+Issue: Frontend starts but API calls fail (CORS/network)
+Fix:
+- Backend must run on 4000
+- Frontend must run on 3000
+- CORS_ORIGIN must be http://localhost:3000
 
+Issue: OTP cannot be received
+Fix:
+- Configure SMTP_* variables
+- Or test flow with local/dev mail capture tool
 
-End of run guide.
+Issue: ZK verification errors during complaint submit
+Fix:
+- Ensure valid proof/root/nullifier are generated for current verifier setup
+
+================================================================
+13) TERMINAL LAYOUT (RECOMMENDED)
+================================================================
+Terminal 1:
+- cd "c:\Users\user\SilentAxis"
+- npm run dev
+
+Terminal 2:
+- cd "c:\Users\user\SilentAxis\silentaxis-frontend"
+- npm run dev
+
+Done.
