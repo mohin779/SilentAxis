@@ -35,18 +35,17 @@ async function ensureOtpSchema(): Promise<void> {
   `);
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS anonymous_tokens (
-      token_hash TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS otp_verification_receipts (
+      receipt_hash TEXT PRIMARY KEY,
       org_id UUID NOT NULL REFERENCES organizations(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      expires_at TIMESTAMPTZ NOT NULL,
-      uses_remaining INT NOT NULL DEFAULT 1
+      expires_at TIMESTAMPTZ NOT NULL
     )
   `);
 
   await pool.query("CREATE INDEX IF NOT EXISTS otp_challenges_org_expires_idx ON otp_challenges (org_id, expires_at DESC)");
   await pool.query(
-    "CREATE INDEX IF NOT EXISTS anonymous_tokens_org_expires_idx ON anonymous_tokens (org_id, expires_at DESC)"
+    "CREATE INDEX IF NOT EXISTS otp_verification_receipts_expires_idx ON otp_verification_receipts (expires_at DESC)"
   );
 
   otpSchemaEnsured = true;
@@ -60,8 +59,8 @@ function hashOtp(challengeId: string, otp: string): string {
   return sha256(`${challengeId}:${otp}:${env.jwtSecret}`);
 }
 
-function hashToken(token: string): string {
-  return sha256(`anon-token:${token}:${env.jwtSecret}`);
+function hashReceipt(receipt: string): string {
+  return sha256(`otp-receipt:${receipt}:${env.jwtSecret}`);
 }
 
 async function sendOtpEmail(to: string, otp: string): Promise<void> {
@@ -133,42 +132,66 @@ export async function verifyOtpChallenge(challengeId: string, otp: string): Prom
   return true;
 }
 
-export async function issueAnonymousToken(challengeId: string): Promise<string> {
+export function deriveDeterministicIdentity(email: string): string {
+  return sha256(`${email.trim().toLowerCase()}:${env.identityServerSecret}`);
+}
+
+export function generateIdentityTrapdoor(): string {
+  return crypto.randomBytes(31).toString("hex");
+}
+
+export function createCommitment(identityNullifier: string, identityTrapdoor: string): string {
+  return sha256(`${identityNullifier}:${identityTrapdoor}`);
+}
+
+export async function getChallengeOfficialEmail(challengeId: string): Promise<string> {
   await ensureOtpSchema();
-  // Read org_id but DO NOT store employee_identifier in token table.
-  const row = await pool.query("SELECT org_id, verified_at FROM otp_challenges WHERE id = $1", [challengeId]);
+  const row = await pool.query(
+    `SELECT oe.official_email
+     FROM otp_challenges oc
+     JOIN org_employees oe
+       ON oe.org_id = oc.org_id
+      AND oe.employee_identifier = oc.employee_identifier
+     WHERE oc.id = $1
+     LIMIT 1`,
+    [challengeId]
+  );
+  if (!row.rowCount) {
+    throw new Error("Challenge not found");
+  }
+  return row.rows[0].official_email as string;
+}
+
+export async function issueEligibilityReceipt(challengeId: string): Promise<{ receipt: string; orgId: string }> {
+  await ensureOtpSchema();
+  const row = await pool.query("SELECT org_id, employee_identifier, verified_at FROM otp_challenges WHERE id = $1", [challengeId]);
   if (!row.rowCount) throw new Error("Challenge not found");
   if (!row.rows[0].verified_at) throw new Error("OTP not verified");
 
-  const token = crypto.randomBytes(32).toString("hex"); // 256-bit
-  const tokenHash = hashToken(token);
+  const receipt = crypto.randomBytes(32).toString("hex");
+  const receiptHash = hashReceipt(receipt);
 
   await pool.query(
-    "INSERT INTO anonymous_tokens (token_hash, org_id, expires_at, uses_remaining) VALUES ($1,$2,NOW() + INTERVAL '30 minutes',10)",
-    [tokenHash, row.rows[0].org_id]
+    "INSERT INTO otp_verification_receipts (receipt_hash, org_id, expires_at) VALUES ($1,$2,NOW() + INTERVAL '20 minutes')",
+    [receiptHash, row.rows[0].org_id]
   );
 
-  // Identity link removal: delete challenge so DB no longer links identifier -> verified session.
   await pool.query("DELETE FROM otp_challenges WHERE id = $1", [challengeId]);
 
-  return token;
+  return { receipt, orgId: row.rows[0].org_id as string };
 }
 
-export async function consumeAnonymousToken(token: string): Promise<{ orgId: string }> {
+export async function consumeEligibilityReceipt(receipt: string): Promise<{ orgId: string }> {
   await ensureOtpSchema();
-  const tokenHash = hashToken(token);
+  const receiptHash = hashReceipt(receipt);
   const row = await pool.query(
-    "SELECT token_hash, org_id, expires_at, uses_remaining FROM anonymous_tokens WHERE token_hash = $1",
-    [tokenHash]
+    "SELECT receipt_hash, org_id, expires_at FROM otp_verification_receipts WHERE receipt_hash = $1",
+    [receiptHash]
   );
-  if (!row.rowCount) throw new Error("Invalid token");
+  if (!row.rowCount) throw new Error("Invalid eligibility receipt");
   const t = row.rows[0];
   if (new Date(t.expires_at).getTime() < Date.now()) throw new Error("Token expired");
-  if ((t.uses_remaining as number) <= 0) throw new Error("Token already used");
-
-  await pool.query("UPDATE anonymous_tokens SET uses_remaining = uses_remaining - 1 WHERE token_hash = $1", [
-    tokenHash
-  ]);
+  await pool.query("DELETE FROM otp_verification_receipts WHERE receipt_hash = $1", [receiptHash]);
   return { orgId: t.org_id as string };
 }
 

@@ -4,10 +4,10 @@ import { api } from "../api/client";
 export type ComplaintRow = {
   id: string;
   org_id: string;
-  encrypted_data: string;
-  encrypted_key: string | null;
   category: "fraud" | "harassment" | "safety" | "corruption" | "other";
-  complaint_status: "SUBMITTED" | "UNDER_REVIEW" | "INVESTIGATING" | "RESOLVED" | "DISMISSED";
+  complaint_status: "SUBMITTED" | "UNDER_REVIEW" | "INVESTIGATING" | "RESOLVED" | "REJECTED";
+  visibility_status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
+  escalated: boolean;
   created_at: string;
 };
 
@@ -59,6 +59,33 @@ export function useAdminAddUpdate() {
         message: input.message,
         status: input.status
       });
+      return r.data;
+    }
+  });
+}
+
+export function useAdminComplaintDetail(complaintId: string) {
+  return useQuery({
+    queryKey: ["admin", "complaint-detail", complaintId],
+    queryFn: async () => {
+      const r = await api.get(`/complaints/${complaintId}`);
+      return r.data as {
+        id: string;
+        category: string;
+        complaint_status: string;
+        visibility_status: string;
+        approvals: Array<{ authority_role: string; status: string; decided_at?: string }>;
+        content_locked: boolean;
+        content: { description: string; evidence?: string } | null;
+      };
+    }
+  });
+}
+
+export function useAdminApprovalDecision() {
+  return useMutation({
+    mutationFn: async (input: { complaintId: string; status: "APPROVED" | "REJECTED" }) => {
+      const r = await api.post(`/complaints/${input.complaintId}/approval`, { status: input.status });
       return r.data;
     }
   });

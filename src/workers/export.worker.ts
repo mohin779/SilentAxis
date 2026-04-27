@@ -2,7 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import { Job, Worker } from "bullmq";
 import { pool } from "../config/db";
-import { redis } from "../config/redis";
+import { redisQueue } from "../config/redis";
 import { EXPORT_QUEUE_NAME, ExportJobPayload } from "../queues/export.queue";
 
 async function processExportJob(job: Job<ExportJobPayload>): Promise<void> {
@@ -53,6 +53,6 @@ let exportWorker: Worker<ExportJobPayload> | undefined;
 export async function startExportWorker(): Promise<void> {
   if (exportWorker) return;
   exportWorker = new Worker<ExportJobPayload>(EXPORT_QUEUE_NAME, processExportJob, {
-    connection: redis
+    connection: redisQueue
   });
 }

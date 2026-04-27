@@ -1,6 +1,14 @@
 import { Request, Response } from "express";
 import { z } from "zod";
-import { issueAnonymousToken, startOtpChallenge, verifyOtpChallenge } from "./employeeOtp.service";
+import {
+  createCommitment,
+  deriveDeterministicIdentity,
+  generateIdentityTrapdoor,
+  getChallengeOfficialEmail,
+  issueEligibilityReceipt,
+  startOtpChallenge,
+  verifyOtpChallenge
+} from "./employeeOtp.service";
 
 const startSchema = z.object({
   orgId: z.string().uuid(),
@@ -39,9 +47,31 @@ export async function verifyEmployeeOtp(req: Request, res: Response): Promise<vo
       res.status(401).json({ error: "Invalid OTP" });
       return;
     }
-    const token = await issueAnonymousToken(parsed.data.challengeId);
-    // One-way: client holds raw token; server stores only hash.
-    res.json({ token, tokenType: "ANON_TOKEN", expiresInSeconds: 1800 });
+    const officialEmail = await getChallengeOfficialEmail(parsed.data.challengeId);
+    const identityNullifier = deriveDeterministicIdentity(officialEmail);
+    const identityTrapdoor = generateIdentityTrapdoor();
+    const commitment = createCommitment(identityNullifier, identityTrapdoor);
+    const receipt = await issueEligibilityReceipt(parsed.data.challengeId);
+    (req as any).session.anonymousComplaint = {
+      orgId: receipt.orgId,
+      verifiedAt: Date.now()
+    };
+    await new Promise<void>((resolve, reject) => {
+      (req as any).session.save((err: unknown) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    res.json({
+      verified: true,
+      eligibilityReceipt: receipt.receipt,
+      orgId: receipt.orgId,
+      anonymousIdentity: {
+        identityNullifier,
+        identityTrapdoor,
+        commitment
+      }
+    });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
   }

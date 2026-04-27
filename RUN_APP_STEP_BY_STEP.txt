@@ -20,7 +20,7 @@ Detailed description of each:
 - Why it is required:
   The backend stores organizations, users/roles, employee directory mapping
   (for OTP routing), complaints, complaint updates, audit logs, escalations,
-  and reporter messaging metadata in PostgreSQL.
+  and anonymous profile/status metadata in PostgreSQL.
 - What happens if it is not running:
   Backend startup or API requests fail with database connection errors.
 - What to verify:
@@ -47,7 +47,7 @@ Detailed description of each:
   controls.
 - What it does:
   - Handles OTP verification and anonymous token issuance
-  - Accepts complaint submissions and evidence upload endpoints
+  - Accepts anonymous complaint submissions with approval-gated visibility
   - Enforces role-based staff access
   - Runs escalation automation and audit-chain logging logic
 - Why it is required:
@@ -59,7 +59,7 @@ Detailed description of each:
 
 4) Frontend (http://localhost:3000)
 - What it is:
-  The React + TypeScript web application used by reporters and staff users.
+  The React + TypeScript web application used by anonymous reporters and staff users.
 - What it does:
   - Reporter flow: /verify -> /report -> /status
   - Staff flow: /staff/login -> /staff/dashboard -> /staff/analytics
@@ -82,7 +82,7 @@ Install first:
 
 Optional:
 - S3-compatible storage (only if STORAGE_DRIVER=s3)
-- circom + snarkjs (only for ZK compile/proof work)
+- No ZK tooling required for active complaint flow
 
 ================================================================
 2) OPEN PROJECT
@@ -208,9 +208,7 @@ Backend build:
 1) npm run build
 2) npm start
 
-ZK tooling:
-1) npm run zk:compile
-2) npm run zk:proof
+No ZK tooling required for the active complaint architecture.
 
 ================================================================
 12) MOST COMMON FAILURES (FAST FIXES)
@@ -243,9 +241,9 @@ Fix:
 - Configure SMTP_* variables
 - Or test flow with local/dev mail capture tool
 
-Issue: ZK verification errors during complaint submit
+Issue: Complaint content remains locked for staff
 Fix:
-- Ensure valid proof/root/nullifier are generated for current verifier setup
+- Authority role (HR/MANAGER/REGIONAL_OFFICER) must approve in approval panel
 
 ================================================================
 13) TERMINAL LAYOUT (RECOMMENDED)

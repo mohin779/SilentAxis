@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useAdminAddUpdate, useAdminTimeline } from "../../hooks/useAdmin";
+import { useAdminAddUpdate, useAdminApprovalDecision, useAdminComplaintDetail, useAdminTimeline } from "../../hooks/useAdmin";
 import { useAuthStore } from "../../store/authStore";
 import { Badge, Button, Card, Select, Textarea } from "../../components/ui";
 
@@ -8,7 +8,9 @@ export function StaffComplaintPage() {
   const { id } = useParams();
   const staff = useAuthStore((s) => s.staff)!;
   const timeline = useAdminTimeline(String(id));
+  const detail = useAdminComplaintDetail(String(id));
   const addUpdate = useAdminAddUpdate();
+  const decide = useAdminApprovalDecision();
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<string>("");
 
@@ -55,6 +57,48 @@ export function StaffComplaintPage() {
         </div>
       </Card>
 
+      <Card title="Approval panel">
+        {detail.isLoading ? (
+          <div className="text-sm text-slate-600">Loading...</div>
+        ) : detail.error ? (
+          <div className="text-sm text-rose-700">{(detail.error as Error).message}</div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <Badge tone={detail.data?.visibility_status === "APPROVED" ? "success" : "warning"}>
+                {detail.data?.visibility_status}
+              </Badge>
+              <Badge tone="neutral">Case: {detail.data?.complaint_status}</Badge>
+            </div>
+            <div className="space-y-2">
+              {(detail.data?.approvals ?? []).map((a) => (
+                <div key={a.authority_role} className="rounded border p-2 text-xs">
+                  <span className="font-semibold">{a.authority_role}</span>: {a.status}
+                </div>
+              ))}
+            </div>
+            {["HR", "MANAGER", "REGIONAL_OFFICER"].includes(staff.role) ? (
+              <div className="flex gap-2">
+                <Button onClick={() => decide.mutateAsync({ complaintId: String(id), status: "APPROVED" }).then(() => detail.refetch())}>
+                  Approve
+                </Button>
+                <Button variant="secondary" onClick={() => decide.mutateAsync({ complaintId: String(id), status: "REJECTED" }).then(() => detail.refetch())}>
+                  Reject
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </Card>
+
+      <Card title="Complaint content">
+        {detail.data?.content_locked ? (
+          <div className="text-sm text-amber-700">Content locked until approval.</div>
+        ) : (
+          <pre className="whitespace-pre-wrap rounded border bg-slate-50 p-3 text-sm">{detail.data?.content?.description ?? ""}</pre>
+        )}
+      </Card>
+
       <Card title="Status update">
         {!canUpdate ? (
           <div className="text-sm text-slate-600">Your role is read-only for complaint updates.</div>
@@ -67,7 +111,7 @@ export function StaffComplaintPage() {
                 <option value="UNDER_REVIEW">UNDER_REVIEW</option>
                 <option value="INVESTIGATING">INVESTIGATING</option>
                 <option value="RESOLVED">RESOLVED</option>
-                <option value="DISMISSED">DISMISSED</option>
+                <option value="REJECTED">REJECTED</option>
               </Select>
             </div>
             <div>

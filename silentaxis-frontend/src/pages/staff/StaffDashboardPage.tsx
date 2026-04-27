@@ -66,6 +66,8 @@ export function StaffDashboardPage() {
                   <th className="py-2">Complaint ID</th>
                   <th>Category</th>
                   <th>Status</th>
+                  <th>Approval Status</th>
+                  <th>Escalation</th>
                   <th>Created</th>
                 </tr>
               </thead>
@@ -83,13 +85,21 @@ export function StaffDashboardPage() {
                         tone={
                           r.complaint_status === "SUBMITTED"
                             ? "warning"
-                            : r.complaint_status === "RESOLVED" || r.complaint_status === "DISMISSED"
+                            : r.complaint_status === "RESOLVED" || r.complaint_status === "REJECTED"
                               ? "success"
                               : "neutral"
                         }
                       >
                         {r.complaint_status}
                       </Badge>
+                    </td>
+                    <td>
+                      <Badge tone={r.visibility_status === "APPROVED" ? "success" : r.visibility_status === "REJECTED" ? "danger" : "warning"}>
+                        {r.visibility_status}
+                      </Badge>
+                    </td>
+                    <td>
+                      <Badge tone={r.escalated ? "warning" : "neutral"}>{r.escalated ? "ESCALATED" : "-"}</Badge>
                     </td>
                     <td className="text-slate-600">{new Date(r.created_at).toLocaleString()}</td>
                   </tr>

@@ -1,0 +1,113 @@
+SilentAxis ZKP Anonymous Flow (Deterministic Identity + Merkle + Daily Nullifier)
+===============================================================================
+
+1) OTP verification (email is temporary)
+----------------------------------------
+1. User submits org id + employee identifier.
+2. Backend resolves official email from org employee directory.
+3. Backend sends OTP to official email.
+4. User submits OTP.
+5. Backend verifies OTP challenge and marks it verified.
+
+Important:
+- Official email is used only for OTP verification.
+- Email is never persisted into complaint records or identity tables.
+
+
+2) Identity derivation (email + server secret -> hidden identity)
+-----------------------------------------------------------------
+After OTP verification, backend derives:
+
+- identity_nullifier = H(lowercase(email) + ":" + IDENTITY_SERVER_SECRET)
+- identity_trapdoor = random 31-byte secret
+- commitment = H(identity_nullifier + ":" + identity_trapdoor)
+
+Backend then returns:
+- eligibilityReceipt (one-time registration token)
+- anonymousIdentity { identityNullifier, identityTrapdoor, commitment }
+
+Privacy model:
+- Raw email is not returned to client.
+- Raw email is not stored in complaints or identity_commitments.
+- Deterministic identity_nullifier is stable for the same email.
+
+
+3) Commitment registration + Merkle insertion
+---------------------------------------------
+1. Frontend sends commitment + eligibilityReceipt to /identity/register.
+2. Backend validates and consumes eligibility receipt.
+3. Backend inserts commitment into identity_commitments table.
+4. Backend updates incremental Merkle tree for that organization.
+5. Backend stores resulting root in merkle_roots.
+6. Backend returns:
+   - root
+   - merkleProof
+   - merkleIndices
+   - leafIndex
+
+If commitment already exists, frontend can fetch proof directly from /identity/proof.
+
+
+4) Daily nullifier logic (1 complaint per user per day)
+-------------------------------------------------------
+Date format is fixed as YYYY-MM-DD.
+
+Circuit nullifier rule:
+- nullifierHash = Poseidon(identity_nullifier, date_yyyymmdd)
+
+Consequences:
+- same user + same day -> same nullifierHash
+- same user + different day -> different nullifierHash
+- backend enforces uniqueness by rejecting duplicate nullifierHash in complaints
+
+
+5) Complaint proof generation flow (frontend)
+---------------------------------------------
+Before complaint submit:
+1. Ensure anonymousIdentity exists from OTP verification.
+2. Ensure Merkle proof exists (fetch /identity/proof or register once).
+3. Build circuit inputs:
+   - identity_nullifier
+   - identity_trapdoor
+   - merkle_path
+   - merkle_indices
+   - root
+   - date
+4. Generate Groth16 proof using SnarkJS.
+5. Submit /complaints with:
+   - proof
+   - publicSignals { root, nullifierHash }
+   - encryptedComplaint
+   - category
+
+
+6) Backend complaint verification flow
+--------------------------------------
+On POST /complaints:
+1. Verify Groth16 proof against verification key.
+2. Check root exists in merkle_roots.
+3. Check complaints table for existing nullifier_hash.
+4. If nullifier exists -> reject with "Already submitted today".
+5. Else insert complaint with:
+   - nullifier_hash
+   - merkle_root
+   - encrypted_data
+   - category
+6. Continue normal staff approval/timeline flow.
+
+
+7) Why this system is anonymous
+-------------------------------
+- No email is stored in complaint records.
+- No session/profile hash is used for reporter linkage.
+- Complaint linkage is cryptographic (root + nullifier) only.
+- Nullifier reveals only uniqueness for a date, not who the user is.
+- Membership proof confirms complaint author is an authorized/verified member.
+
+
+8) How 1-per-day enforcement works
+----------------------------------
+- Deterministic identity_nullifier guarantees same user maps to same base identity.
+- Date-bound nullifierHash guarantees one stable complaint key per day.
+- Unique nullifierHash check in backend blocks second submission on same day.
+- New day -> new date input -> new nullifierHash -> one new complaint allowed.

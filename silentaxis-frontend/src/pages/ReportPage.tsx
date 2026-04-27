@@ -5,6 +5,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button, Card, Input, Label, Select, Textarea } from "../components/ui";
 import { api } from "../api/client";
 import DOMPurify from "dompurify";
+import { useAuthStore } from "../store/authStore";
+import { generateCommitment, generateIdentity, generateProof } from "../services/zkService";
 
 const schema = z.object({
   category: z.enum(["fraud", "harassment", "safety", "corruption", "other"]),
@@ -14,19 +16,14 @@ const schema = z.object({
 });
 type Form = z.infer<typeof schema>;
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result).split(",")[1] ?? "");
-    r.onerror = () => reject(new Error("Failed to read file"));
-    r.readAsDataURL(file);
-  });
-}
-
 export function ReportPage() {
-  const [result, setResult] = useState<{ complaintId: string; secretKey?: string; hash?: string } | null>(null);
+  const [result, setResult] = useState<{ complaintId: string; secretKey: string; hash: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [evidence, setEvidence] = useState<File | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const eligibilityReceipt = useAuthStore((s) => s.zkEligibilityReceipt);
+  const clearEligibilityReceipt = useAuthStore((s) => s.setZkEligibilityReceipt);
+  const verifiedOrgId = useAuthStore((s) => s.verifiedOrgId);
+  const anonymousIdentity = useAuthStore((s) => s.anonymousIdentity);
 
   const form = useForm<Form>({
     resolver: zodResolver(schema),
@@ -47,6 +44,18 @@ export function ReportPage() {
     return { title, desc };
   }, [watchedTitle, watchedDescription]);
 
+  function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+    return Promise.race([
+      p,
+      new Promise<T>((_resolve, reject) => {
+        const t = window.setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+        // avoid keeping timer alive if resolved quickly
+        // eslint-disable-next-line @typescript-eslint/no-floating-promises
+        p.finally(() => window.clearTimeout(t));
+      })
+    ]);
+  }
+
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Card title="Submit anonymous complaint">
@@ -60,7 +69,58 @@ export function ReportPage() {
           onSubmit={form.handleSubmit(async (v) => {
             setError(null);
             setResult(null);
+            setNotice(null);
             try {
+              let proofBundle:
+                | { proof: unknown; publicSignals: string[]; nullifierHash: string; root: string }
+                | null = null;
+              if (!verifiedOrgId || !anonymousIdentity) {
+                setNotice("Dev mode: submitting without client-side ZK proof (backend auto mode).");
+              } else {
+                try {
+                  const identity = await generateIdentity(anonymousIdentity);
+                  const commitment = await generateCommitment(identity);
+                  let identityRegistration: {
+                    root: string;
+                    merkleProof: string[];
+                    merkleIndices: number[];
+                  };
+                  if (eligibilityReceipt) {
+                    const registered = await api.post<{
+                      root: string;
+                      merkleProof: string[];
+                      merkleIndices: number[];
+                    }>("/identity/register", { commitment, eligibilityReceipt }, { timeout: 4000 });
+                    identityRegistration = registered.data;
+                  } else {
+                    const proofLookup = await api.get<{
+                      root: string;
+                      merkleProof: string[];
+                      merkleIndices: number[];
+                    }>("/identity/proof", {
+                      params: { orgId: verifiedOrgId, commitment },
+                      timeout: 4000
+                    });
+                    identityRegistration = proofLookup.data;
+                  }
+                  const currentDate = new Date().toISOString().slice(0, 10);
+                  proofBundle = await withTimeout(
+                    generateProof({
+                      identity,
+                      merklePath: identityRegistration.merkleProof,
+                      merkleIndices: identityRegistration.merkleIndices,
+                      root: identityRegistration.root,
+                      date: currentDate
+                    }),
+                    6000,
+                    "ZK proof generation"
+                  );
+                } catch {
+                  proofBundle = null;
+                  setNotice("Dev mode: identity/proof step unavailable; submitted without proof (backend auto mode).");
+                }
+              }
+
               const encryptedComplaint = btoa(
                 JSON.stringify({
                   title: v.title,
@@ -69,33 +129,28 @@ export function ReportPage() {
                   createdAt: new Date().toISOString()
                 })
               );
-              const payload = {
+              const r = await api.post<{ complaintId: string; hash: string; secretKey: string }>("/complaints", {
                 encryptedComplaint,
-                category: v.category
-              };
-
-              const r = await api.post<{ complaintId: string; hash: string }>("/complaints", payload, {
-                headers: { "x-requires-anon-token": "1" }
+                category: v.category,
+                ...(proofBundle
+                  ? {
+                      proof: proofBundle.proof,
+                      publicSignals: { root: proofBundle.root, nullifierHash: proofBundle.nullifierHash },
+                      nullifierHash: proofBundle.nullifierHash,
+                      root: proofBundle.root
+                    }
+                  : {})
+                  }, {
+                    timeout: 30_000
               });
-
-              // Evidence upload (optional) uses a separate endpoint in the backend.
-              if (evidence) {
-                const base64 = await fileToBase64(evidence);
-                await api.post(
-                  `/complaints/${r.data.complaintId}/evidence`,
-                  {
-                    fileName: evidence.name,
-                    encryptedFileBase64: base64,
-                    encryptedKey: "client_encrypted_key_placeholder"
-                  },
-                  { headers: { "x-requires-anon-token": "1" } }
-                );
-              }
-
-              setResult({ complaintId: r.data.complaintId, hash: r.data.hash });
+              clearEligibilityReceipt(null);
+              setResult({ complaintId: r.data.complaintId, hash: r.data.hash, secretKey: r.data.secretKey });
             } catch (e) {
               setError((e as Error).message);
             }
+          }, (invalid) => {
+            const firstMessage = Object.values(invalid).find((entry) => entry?.message)?.message;
+            setError(firstMessage ? String(firstMessage) : "Please complete all required complaint fields.");
           })}
         >
           <div className="grid gap-4 md:grid-cols-2">
@@ -118,44 +173,36 @@ export function ReportPage() {
           <div>
             <Label>Title</Label>
             <Input {...form.register("title")} />
+            {form.formState.errors.title ? (
+              <div className="mt-1 text-xs text-rose-700">{form.formState.errors.title.message}</div>
+            ) : null}
           </div>
           <div>
             <Label>Description</Label>
             <Textarea rows={6} {...form.register("description")} />
+            {form.formState.errors.description ? (
+              <div className="mt-1 text-xs text-rose-700">{form.formState.errors.description.message}</div>
+            ) : null}
           </div>
 
-          <div>
-            <Label>Evidence upload (optional)</Label>
-            <input
-              type="file"
-              className="mt-1 block w-full text-sm"
-              onChange={(e) => {
-                const f = e.target.files?.[0] ?? null;
-                if (f && f.size > 5 * 1024 * 1024) {
-                  setError("Evidence file too large (max 5MB)");
-                  setEvidence(null);
-                  return;
-                }
-                setEvidence(f);
-              }}
-            />
-            <div className="mt-1 text-xs text-slate-500">
-              The backend stores evidence encrypted; this UI currently sends the file bytes as a placeholder “encrypted”
-              payload. For production, encrypt client-side and send ciphertext.
-            </div>
+          <div className="rounded-xl border bg-slate-50 p-3 text-xs text-slate-600">
+            Evidence support is enabled in backend workflow; secure upload UI can be attached in the next step.
           </div>
 
           <div className="rounded-xl border bg-slate-50 p-4">
             <div className="text-sm font-semibold text-slate-900">Automatic privacy proof</div>
             <div className="mt-1 text-xs text-slate-600">
-              ZK bundle is generated automatically by the backend in local auto mode. Users do not need to paste Merkle
-              root, nullifier hash, or proof JSON manually.
+              Browser generates a fresh identity, commitment, and Groth16 proof per complaint. No identity secret is sent
+              to backend.
             </div>
           </div>
 
           {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</div> : null}
+          {notice ? <div className="rounded-lg border bg-slate-50 p-3 text-sm text-slate-700">{notice}</div> : null}
 
-          <Button type="submit">Submit complaint</Button>
+          <Button type="submit" disabled={form.formState.isSubmitting}>
+            {form.formState.isSubmitting ? "Submitting..." : "Submit complaint"}
+          </Button>
 
           {result ? (
             <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
@@ -165,14 +212,11 @@ export function ReportPage() {
                   <span className="font-semibold">Complaint ID:</span>{" "}
                   <span className="font-mono text-xs">{result.complaintId}</span>
                 </div>
-                <div>
-                  <span className="font-semibold">Hash:</span>{" "}
-                  <span className="font-mono text-xs">{result.hash}</span>
-                </div>
+                <div><span className="font-semibold">Secret key:</span> <span className="font-mono text-xs">{result.secretKey}</span></div>
+                <div><span className="font-semibold">Hash:</span> <span className="font-mono text-xs">{result.hash}</span></div>
               </div>
               <div className="mt-3 rounded-lg border border-emerald-200 bg-white p-3 text-xs text-slate-700">
-                Save your complaint access credentials. In this backend build, reporter access is established via the
-                reporter session API (complaint ID + secret), which must be created/managed separately.
+                Save complaint ID + secret key. They are the only credentials for `/status`.
               </div>
             </div>
           ) : null}

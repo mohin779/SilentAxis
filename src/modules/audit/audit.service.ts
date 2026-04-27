@@ -5,7 +5,15 @@ import { sha256 } from "../../utils/crypto/hashing";
 export async function createAuditLog(params: {
   orgId: string;
   actorId: string;
-  action: "VIEW_TIMELINE" | "UPDATE_COMPLAINT" | "EXPORT_DATA";
+  action:
+    | "VIEW_TIMELINE"
+    | "UPDATE_COMPLAINT"
+    | "EXPORT_DATA"
+    | "APPROVE_COMPLAINT"
+    | "REJECT_COMPLAINT"
+    | "CREATE_COMPLAINT"
+    | "VIEW_COMPLAINT"
+    | "RESOLVE_COMPLAINT";
   complaintId?: string;
 }): Promise<void> {
   const prev = await pool.query(

@@ -1,4 +1,4 @@
-export type Role = "EMPLOYEE" | "ORG_ADMIN" | "ORG_STAFF";
+export type Role = "EMPLOYEE" | "ORG_ADMIN" | "ORG_STAFF" | "HR" | "MANAGER" | "REGIONAL_OFFICER";
 
 export interface AuthUser {
   userId: string;
@@ -7,6 +7,8 @@ export interface AuthUser {
   email: string;
   sessionId: string;
 }
+
+export type ApprovalRole = "HR" | "MANAGER" | "REGIONAL_OFFICER";
 
 export interface AnonymousContext {
   orgId: string;

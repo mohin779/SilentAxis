@@ -62,14 +62,13 @@ CREATE TABLE IF NOT EXISTS otp_challenges (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Anonymous access tokens issued after OTP verification.
--- IMPORTANT: no employee identity is stored here.
-CREATE TABLE IF NOT EXISTS anonymous_tokens (
-  token_hash TEXT PRIMARY KEY,
+-- One-time eligibility receipts created after OTP verification.
+-- Contains no employee identifier and is consumed when commitment is registered.
+CREATE TABLE IF NOT EXISTS otp_verification_receipts (
+  receipt_hash TEXT PRIMARY KEY,
   org_id UUID NOT NULL REFERENCES organizations(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  expires_at TIMESTAMPTZ NOT NULL,
-  uses_remaining INT NOT NULL DEFAULT 1
+  expires_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS identity_commitments (
@@ -106,8 +105,23 @@ CREATE TABLE IF NOT EXISTS complaints (
   encrypted_data TEXT NOT NULL,
   encrypted_key TEXT,
   category TEXT NOT NULL DEFAULT 'other' CHECK (category IN ('fraud', 'harassment', 'safety', 'corruption', 'other')),
-  complaint_status TEXT NOT NULL DEFAULT 'SUBMITTED' CHECK (complaint_status IN ('SUBMITTED', 'UNDER_REVIEW', 'INVESTIGATING', 'RESOLVED', 'DISMISSED')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  complaint_status TEXT NOT NULL DEFAULT 'SUBMITTED' CHECK (complaint_status IN ('SUBMITTED', 'UNDER_REVIEW', 'INVESTIGATING', 'RESOLVED', 'REJECTED')),
+  visibility_status TEXT NOT NULL DEFAULT 'PENDING_APPROVAL' CHECK (visibility_status IN ('PENDING_APPROVAL', 'APPROVED', 'REJECTED')),
+  nullifier_hash TEXT UNIQUE,
+  merkle_root TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE complaints
+  DROP COLUMN IF EXISTS reporter_profile_hash;
+
+CREATE TABLE IF NOT EXISTS complaint_approvals (
+  id UUID PRIMARY KEY,
+  complaint_id UUID NOT NULL REFERENCES complaints(id),
+  authority_role TEXT NOT NULL CHECK (authority_role IN ('HR', 'MANAGER', 'REGIONAL_OFFICER')),
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+  decided_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS complaint_updates (
@@ -126,7 +140,7 @@ CREATE TABLE IF NOT EXISTS org_audit_logs (
   id UUID PRIMARY KEY,
   org_id UUID NOT NULL REFERENCES organizations(id),
   actor_id TEXT,
-  action TEXT NOT NULL CHECK (action IN ('VIEW_TIMELINE', 'UPDATE_COMPLAINT', 'EXPORT_DATA')),
+  action TEXT NOT NULL CHECK (action IN ('VIEW_TIMELINE', 'UPDATE_COMPLAINT', 'EXPORT_DATA', 'APPROVE_COMPLAINT', 'REJECT_COMPLAINT', 'CREATE_COMPLAINT', 'VIEW_COMPLAINT', 'RESOLVE_COMPLAINT')),
   complaint_id UUID,
   timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   previous_hash TEXT,
@@ -135,7 +149,7 @@ CREATE TABLE IF NOT EXISTS org_audit_logs (
 
 CREATE INDEX IF NOT EXISTS org_audit_logs_org_time_idx ON org_audit_logs (org_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS otp_challenges_org_expires_idx ON otp_challenges (org_id, expires_at DESC);
-CREATE INDEX IF NOT EXISTS anonymous_tokens_org_expires_idx ON anonymous_tokens (org_id, expires_at DESC);
+CREATE INDEX IF NOT EXISTS otp_verification_receipts_expires_idx ON otp_verification_receipts (expires_at DESC);
 
 -- Escalation tracking (bias control automation).
 CREATE TABLE IF NOT EXISTS complaint_escalations (

@@ -1,11 +1,12 @@
 import { Response } from "express";
 import { z } from "zod";
 import { pool } from "../../config/db";
-import { exportQueue } from "../../queues/export.queue";
+import { enqueueExportJob } from "../../queues/export.queue";
 import { createAuditLog } from "../audit/audit.service";
 import { v4 as uuidv4 } from "uuid";
 import { StaffSessionUser } from "../../middleware/staffSession";
 import { Request } from "express";
+import { decrypt } from "../../utils/crypto/encryption";
 
 const listSchema = z.object({
   page: z.coerce.number().min(1).default(1),
@@ -44,7 +45,11 @@ export async function listComplaints(req: StaffReq, res: Response): Promise<void
     ? [staff.orgId, limit, offset, category]
     : [staff.orgId, limit, offset];
   const rows = await pool.query(
-    `SELECT id, org_id, encrypted_data, encrypted_key, category, complaint_status, created_at FROM complaints WHERE org_id = $1${filterClause} ORDER BY ${sort} ${direction} LIMIT $2 OFFSET $3`,
+    `SELECT c.id, c.org_id, c.category, c.complaint_status, c.visibility_status, c.created_at,
+      EXISTS(SELECT 1 FROM complaint_escalations ce WHERE ce.complaint_id = c.id) AS escalated
+     FROM complaints c
+     WHERE c.org_id = $1${filterClause}
+     ORDER BY c.${sort} ${direction} LIMIT $2 OFFSET $3`,
     params
   );
   res.json({ page, limit, data: rows.rows });
@@ -80,7 +85,7 @@ export async function getTimeline(req: StaffReq, res: Response): Promise<void> {
 export async function addUpdate(req: StaffReq, res: Response): Promise<void> {
   const schema = z.object({
     message: z.string().min(1),
-    status: z.enum(["UNDER_REVIEW", "INVESTIGATING", "RESOLVED", "DISMISSED"]).optional()
+    status: z.enum(["UNDER_REVIEW", "INVESTIGATING", "RESOLVED", "REJECTED"]).optional()
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
@@ -139,7 +144,7 @@ export async function createExportJob(req: StaffReq, res: Response): Promise<voi
     "PENDING",
     JSON.stringify(parsed.data.filters)
   ]);
-  await exportQueue.add("generate-export", { exportJobId: id });
+  await enqueueExportJob({ exportJobId: id });
   await createAuditLog({
     orgId: staff.orgId,
     actorId: staff.userId,
@@ -169,13 +174,13 @@ export async function getAdminStats(req: StaffReq, res: Response): Promise<void>
       `SELECT AVG(EXTRACT(EPOCH FROM (cu.created_at - c.created_at))/3600)::numeric(10,2) AS avg_resolution_hours
        FROM complaints c
        JOIN complaint_updates cu ON cu.complaint_id = c.id
-       WHERE c.org_id = $1 AND c.complaint_status IN ('RESOLVED','DISMISSED')`,
+       WHERE c.org_id = $1 AND c.complaint_status IN ('RESOLVED','REJECTED')`,
       [orgId]
     ),
     pool.query(
       `SELECT
          COUNT(*) FILTER (WHERE complaint_status IN ('SUBMITTED','UNDER_REVIEW','INVESTIGATING'))::int AS open_cases,
-         COUNT(*) FILTER (WHERE complaint_status IN ('RESOLVED','DISMISSED'))::int AS closed_cases
+         COUNT(*) FILTER (WHERE complaint_status IN ('RESOLVED','REJECTED'))::int AS closed_cases
        FROM complaints WHERE org_id = $1`,
       [orgId]
     ),
@@ -183,7 +188,7 @@ export async function getAdminStats(req: StaffReq, res: Response): Promise<void>
       `SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (cu.created_at - c.created_at))/3600)::numeric(10,2) AS median_resolution_hours
        FROM complaints c
        JOIN complaint_updates cu ON cu.complaint_id = c.id
-       WHERE c.org_id = $1 AND c.complaint_status IN ('RESOLVED','DISMISSED')`,
+       WHERE c.org_id = $1 AND c.complaint_status IN ('RESOLVED','REJECTED')`,
       [orgId]
     ),
     pool.query(
@@ -204,6 +209,75 @@ export async function getAdminStats(req: StaffReq, res: Response): Promise<void>
     averageInvestigationHours: resolutionTime.rows[0]?.avg_resolution_hours ?? null,
     complaintsPerInvestigator: perInvestigator.rows,
     caseState: openClosed.rows[0]
+  });
+}
+
+export async function decideApproval(req: StaffReq, res: Response): Promise<void> {
+  const staff = req.session?.staff as StaffSessionUser | undefined;
+  if (!staff) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const schema = z.object({
+    status: z.enum(["APPROVED", "REJECTED"])
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid payload" });
+    return;
+  }
+  if (!["HR", "MANAGER", "REGIONAL_OFFICER"].includes(staff.role)) {
+    res.status(403).json({ error: "Only authorities can decide approval" });
+    return;
+  }
+  const complaintId = req.params.id;
+  await pool.query(
+    "UPDATE complaint_approvals SET status = $1, decided_at = NOW() WHERE complaint_id = $2 AND authority_role = $3",
+    [parsed.data.status, complaintId, staff.role]
+  );
+  if (parsed.data.status === "APPROVED") {
+    await pool.query("UPDATE complaints SET visibility_status = 'APPROVED', complaint_status = 'UNDER_REVIEW' WHERE id = $1", [
+      complaintId
+    ]);
+  }
+  await createAuditLog({
+    orgId: staff.orgId,
+    actorId: staff.userId,
+    action: parsed.data.status === "APPROVED" ? "APPROVE_COMPLAINT" : "REJECT_COMPLAINT",
+    complaintId
+  });
+  res.json({ status: "ok" });
+}
+
+export async function getComplaintDetail(req: StaffReq, res: Response): Promise<void> {
+  const staff = req.session?.staff as StaffSessionUser | undefined;
+  if (!staff) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const row = await pool.query(
+    `SELECT c.id, c.category, c.complaint_status, c.visibility_status, c.encrypted_data, c.updated_at,
+      (SELECT json_agg(json_build_object('authority_role',ca.authority_role,'status',ca.status,'decided_at',ca.decided_at))
+       FROM complaint_approvals ca WHERE ca.complaint_id = c.id) AS approvals
+     FROM complaints c WHERE c.id = $1 AND c.org_id = $2`,
+    [req.params.id, staff.orgId]
+  );
+  if (!row.rowCount) {
+    res.status(404).json({ error: "Complaint not found" });
+    return;
+  }
+  const complaint = row.rows[0];
+  const canViewContent = complaint.visibility_status === "APPROVED";
+  const decryptedContent = canViewContent ? JSON.parse(await decrypt(complaint.encrypted_data as string)) : null;
+  res.json({
+    id: complaint.id,
+    category: complaint.category,
+    complaint_status: complaint.complaint_status,
+    visibility_status: complaint.visibility_status,
+    approvals: complaint.approvals ?? [],
+    content_locked: !canViewContent,
+    content: decryptedContent,
+    updated_at: complaint.updated_at
   });
 }
 

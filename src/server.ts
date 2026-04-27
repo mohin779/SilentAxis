@@ -9,13 +9,27 @@ import { zkVerifier } from "./zk/verifier";
 async function bootstrap() {
   await cleanupOldExportJobs();
   await zkVerifier.initialize();
-  await startExportWorker();
-  await startEvidenceScanWorker();
-  startEscalationWorker();
-  app.listen(env.port, () => {
+  const enableBackgroundWorkers = process.env.NODE_ENV === "production" && Boolean(env.redisUrl);
+  if (enableBackgroundWorkers) {
+    await startExportWorker();
+    await startEvidenceScanWorker();
+    startEscalationWorker();
+  }
+
+  const server = app.listen(env.port, () => {
     // eslint-disable-next-line no-console
     console.log(`SilentAxis backend running on port ${env.port}`);
   });
+
+  const shutdown = (signal: string) => {
+    // eslint-disable-next-line no-console
+    console.log(`Shutting down (${signal})...`);
+    server.close(() => process.exit(0));
+    // Hard-exit fallback if something is keeping the event loop alive.
+    setTimeout(() => process.exit(0), 2000).unref();
+  };
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 bootstrap().catch((error) => {

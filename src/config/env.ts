@@ -16,10 +16,11 @@ export const env = {
   s3Bucket: process.env.S3_BUCKET ?? "",
   s3AccessKeyId: process.env.S3_ACCESS_KEY_ID ?? "",
   s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
-  sessionSecret: process.env.SESSION_SECRET ?? process.env.JWT_SECRET ?? ""
+  sessionSecret: process.env.SESSION_SECRET ?? process.env.JWT_SECRET ?? "",
+  identityServerSecret: process.env.IDENTITY_SERVER_SECRET ?? process.env.JWT_SECRET ?? ""
 };
 
-if (!env.databaseUrl || !env.jwtSecret || !env.encryptionKey || !env.sessionSecret) {
+if (!env.databaseUrl || !env.jwtSecret || !env.encryptionKey || !env.sessionSecret || !env.identityServerSecret) {
   throw new Error("Missing required environment variables");
 }
 

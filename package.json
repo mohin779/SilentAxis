@@ -6,7 +6,8 @@
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "predev": "node scripts/kill-port.js 4000",
+    "dev": "ts-node-dev --respawn --exit-child --transpile-only src/server.ts",
     "start": "node dist/server.js",
     "test": "jest --runInBand",
     "seed:demo": "ts-node --transpile-only src/scripts/seedDemo.ts",
