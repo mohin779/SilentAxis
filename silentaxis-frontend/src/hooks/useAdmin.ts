@@ -91,6 +91,15 @@ export function useAdminApprovalDecision() {
   });
 }
 
+export function useAdminRequestProof() {
+  return useMutation({
+    mutationFn: async (input: { complaintId: string; message: string }) => {
+      const r = await api.post(`/complaints/${input.complaintId}/request-proof`, { message: input.message });
+      return r.data;
+    }
+  });
+}
+
 export type AdminStats = {
   perCategory: { category: string; count: number }[];
   monthlyTrend: { month: string; count: number }[];

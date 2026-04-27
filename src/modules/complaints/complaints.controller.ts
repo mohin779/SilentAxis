@@ -6,6 +6,8 @@ import { pool } from "../../config/db";
 import { AuthRequest } from "../../middleware/auth";
 import { submitComplaint } from "./complaints.service";
 import { decrypt } from "../../utils/crypto/encryption";
+import { storeEncryptedEvidence } from "../../services/evidenceStorage.service";
+import { enqueueEvidenceScanJob } from "../../queues/evidenceScan.queue";
 
 const complaintSchema = z.object({
   encryptedComplaint: z.string().min(1),
@@ -102,4 +104,57 @@ export async function getComplaintStatus(req: AuthRequest, res: Response): Promi
     updatedAt: complaint.rows[0].updated_at,
     timeline: timeline.rows
   });
+}
+
+export async function submitReporterProof(req: AuthRequest, res: Response): Promise<void> {
+  const schema = z.object({
+    complaintId: z.string().uuid(),
+    secretKey: z.string().min(8),
+    message: z.string().min(1).max(5000),
+    fileName: z.string().min(1).max(255).optional(),
+    fileBase64: z.string().min(1).optional(),
+    noProofReason: z.string().max(500).optional()
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid payload" });
+    return;
+  }
+  const complaint = await pool.query(
+    "SELECT c.id, c.org_id, rs.reporter_secret FROM complaints c JOIN reporter_sessions rs ON rs.complaint_id = c.id WHERE c.id = $1",
+    [parsed.data.complaintId]
+  );
+  if (!complaint.rowCount) {
+    res.status(404).json({ error: "Complaint not found" });
+    return;
+  }
+  const validSecret = (await decrypt(complaint.rows[0].reporter_secret as string)) === parsed.data.secretKey;
+  if (!validSecret) {
+    res.status(401).json({ error: "Invalid complaint credentials" });
+    return;
+  }
+
+  await pool.query("INSERT INTO complaint_updates (id, complaint_id, message) VALUES ($1,$2,$3)", [
+    uuidv4(),
+    parsed.data.complaintId,
+    `REPORTER_PROOF_REPLY: ${parsed.data.message}${parsed.data.noProofReason ? ` | No-proof-note: ${parsed.data.noProofReason}` : ""}`
+  ]);
+
+  if (parsed.data.fileName && parsed.data.fileBase64) {
+    const filePath = await storeEncryptedEvidence(parsed.data.fileName, parsed.data.fileBase64);
+    const evidenceId = uuidv4();
+    await pool.query(
+      `INSERT INTO complaint_evidence (id, complaint_id, file_path, encrypted_key, scan_status)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [evidenceId, parsed.data.complaintId, filePath, "USER_UPLOADED_PROOF", "PENDING"]
+    );
+    await enqueueEvidenceScanJob({ evidenceId });
+    await pool.query("INSERT INTO complaint_updates (id, complaint_id, message) VALUES ($1,$2,$3)", [
+      uuidv4(),
+      parsed.data.complaintId,
+      `REPORTER_PROOF_FILE_UPLOADED: ${parsed.data.fileName}`
+    ]);
+  }
+
+  res.status(201).json({ status: "ok" });
 }

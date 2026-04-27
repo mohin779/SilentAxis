@@ -18,6 +18,23 @@ const listSchema = z.object({
 
 type StaffReq = Request & { session: any; staff?: StaffSessionUser };
 
+let adminSchemaEnsured = false;
+
+async function ensureAdminSchema(): Promise<void> {
+  if (adminSchemaEnsured) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS complaint_escalations (
+      id UUID PRIMARY KEY,
+      complaint_id UUID NOT NULL REFERENCES complaints(id),
+      org_id UUID NOT NULL REFERENCES organizations(id),
+      reason TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (complaint_id, reason)
+    )
+  `);
+  adminSchemaEnsured = true;
+}
+
 const employeeSchema = z.object({
   employeeIdentifier: z.string().min(3).max(320),
   officialEmail: z.string().email()
@@ -38,21 +55,24 @@ export async function listComplaints(req: StaffReq, res: Response): Promise<void
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const { page, limit, sort, direction, category } = parsed.data;
-  const offset = (page - 1) * limit;
-  const filterClause = category ? " AND category = $4" : "";
-  const params = category
-    ? [staff.orgId, limit, offset, category]
-    : [staff.orgId, limit, offset];
-  const rows = await pool.query(
-    `SELECT c.id, c.org_id, c.category, c.complaint_status, c.visibility_status, c.created_at,
-      EXISTS(SELECT 1 FROM complaint_escalations ce WHERE ce.complaint_id = c.id) AS escalated
-     FROM complaints c
-     WHERE c.org_id = $1${filterClause}
-     ORDER BY c.${sort} ${direction} LIMIT $2 OFFSET $3`,
-    params
-  );
-  res.json({ page, limit, data: rows.rows });
+  try {
+    await ensureAdminSchema();
+    const { page, limit, sort, direction, category } = parsed.data;
+    const offset = (page - 1) * limit;
+    const filterClause = category ? " AND category = $4" : "";
+    const params = category ? [staff.orgId, limit, offset, category] : [staff.orgId, limit, offset];
+    const rows = await pool.query(
+      `SELECT c.id, c.org_id, c.category, c.complaint_status, c.visibility_status, c.created_at,
+        EXISTS(SELECT 1 FROM complaint_escalations ce WHERE ce.complaint_id = c.id) AS escalated
+       FROM complaints c
+       WHERE c.org_id = $1${filterClause}
+       ORDER BY c.${sort} ${direction} LIMIT $2 OFFSET $3`,
+      params
+    );
+    res.json({ page, limit, data: rows.rows });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
 }
 
 export async function getTimeline(req: StaffReq, res: Response): Promise<void> {
@@ -231,22 +251,60 @@ export async function decideApproval(req: StaffReq, res: Response): Promise<void
     return;
   }
   const complaintId = req.params.id;
-  await pool.query(
-    "UPDATE complaint_approvals SET status = $1, decided_at = NOW() WHERE complaint_id = $2 AND authority_role = $3",
-    [parsed.data.status, complaintId, staff.role]
-  );
-  if (parsed.data.status === "APPROVED") {
-    await pool.query("UPDATE complaints SET visibility_status = 'APPROVED', complaint_status = 'UNDER_REVIEW' WHERE id = $1", [
+  try {
+    await pool.query(
+      "UPDATE complaint_approvals SET status = $1, decided_at = NOW() WHERE complaint_id = $2 AND authority_role = $3",
+      [parsed.data.status, complaintId, staff.role]
+    );
+    if (parsed.data.status === "APPROVED") {
+      await pool.query("UPDATE complaints SET visibility_status = 'APPROVED', complaint_status = 'UNDER_REVIEW' WHERE id = $1", [
+        complaintId
+      ]);
+    }
+    await createAuditLog({
+      orgId: staff.orgId,
+      actorId: staff.userId,
+      action: parsed.data.status === "APPROVED" ? "APPROVE_COMPLAINT" : "REJECT_COMPLAINT",
       complaintId
-    ]);
+    });
+    res.json({ status: "ok" });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
   }
+}
+
+export async function requestProofFromReporter(req: StaffReq, res: Response): Promise<void> {
+  const staff = req.session?.staff as StaffSessionUser | undefined;
+  if (!staff) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  if (!["HR", "MANAGER", "REGIONAL_OFFICER"].includes(staff.role)) {
+    res.status(403).json({ error: "Only authorities can request proof" });
+    return;
+  }
+  const parsed = z.object({ message: z.string().min(5).max(1000) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid payload" });
+    return;
+  }
+  const complaint = await pool.query("SELECT id, org_id FROM complaints WHERE id = $1", [req.params.id]);
+  if (!complaint.rowCount || complaint.rows[0].org_id !== staff.orgId) {
+    res.status(404).json({ error: "Complaint not found" });
+    return;
+  }
+  await pool.query("INSERT INTO complaint_updates (id, complaint_id, message) VALUES ($1,$2,$3)", [
+    uuidv4(),
+    req.params.id,
+    `PROOF_REQUEST: ${parsed.data.message}`
+  ]);
   await createAuditLog({
     orgId: staff.orgId,
     actorId: staff.userId,
-    action: parsed.data.status === "APPROVED" ? "APPROVE_COMPLAINT" : "REJECT_COMPLAINT",
-    complaintId
+    action: "UPDATE_COMPLAINT",
+    complaintId: req.params.id
   });
-  res.json({ status: "ok" });
+  res.status(201).json({ status: "ok" });
 }
 
 export async function getComplaintDetail(req: StaffReq, res: Response): Promise<void> {
@@ -268,7 +326,21 @@ export async function getComplaintDetail(req: StaffReq, res: Response): Promise<
   }
   const complaint = row.rows[0];
   const canViewContent = complaint.visibility_status === "APPROVED";
-  const decryptedContent = canViewContent ? JSON.parse(await decrypt(complaint.encrypted_data as string)) : null;
+  let decryptedContent: any = null;
+  if (canViewContent) {
+    const payload = complaint.encrypted_data as string;
+    try {
+      decryptedContent = JSON.parse(await decrypt(payload));
+    } catch {
+      // Dev compatibility: some local flows store base64(JSON) instead of AES envelope.
+      try {
+        const raw = Buffer.from(payload, "base64").toString("utf8");
+        decryptedContent = JSON.parse(raw);
+      } catch {
+        decryptedContent = null;
+      }
+    }
+  }
   res.json({
     id: complaint.id,
     category: complaint.category,

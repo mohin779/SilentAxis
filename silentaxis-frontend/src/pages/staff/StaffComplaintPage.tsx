@@ -1,6 +1,12 @@
 import React, { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useAdminAddUpdate, useAdminApprovalDecision, useAdminComplaintDetail, useAdminTimeline } from "../../hooks/useAdmin";
+import {
+  useAdminAddUpdate,
+  useAdminApprovalDecision,
+  useAdminComplaintDetail,
+  useAdminRequestProof,
+  useAdminTimeline
+} from "../../hooks/useAdmin";
 import { useAuthStore } from "../../store/authStore";
 import { Badge, Button, Card, Select, Textarea } from "../../components/ui";
 
@@ -11,13 +17,19 @@ export function StaffComplaintPage() {
   const detail = useAdminComplaintDetail(String(id));
   const addUpdate = useAdminAddUpdate();
   const decide = useAdminApprovalDecision();
+  const requestProof = useAdminRequestProof();
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<string>("");
+  const [proofRequestMessage, setProofRequestMessage] = useState("");
 
   const canUpdate = useMemo(() => ["ORG_ADMIN", "ORG_STAFF", "HR"].includes(staff.role), [staff.role]);
 
   return (
     <div className="space-y-6">
+      <div className="rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-indigo-700 via-violet-700 to-fuchsia-700 p-5 text-white shadow-lg">
+        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-100">Case Workspace</div>
+        <div className="mt-2 text-xl font-semibold tracking-tight">Complaint review, approval and reporter coordination</div>
+      </div>
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-sm text-slate-600">Complaint</div>
@@ -29,7 +41,7 @@ export function StaffComplaintPage() {
         </div>
       </div>
 
-      <Card title="Timeline (append-only)">
+      <Card title="Timeline (append-only)" className="bg-gradient-to-b from-white to-indigo-50/20">
         {timeline.isLoading ? (
           <div className="text-sm text-slate-600">Loading…</div>
         ) : timeline.error ? (
@@ -57,7 +69,7 @@ export function StaffComplaintPage() {
         </div>
       </Card>
 
-      <Card title="Approval panel">
+      <Card title="Approval panel" className="bg-gradient-to-b from-white to-violet-50/20">
         {detail.isLoading ? (
           <div className="text-sm text-slate-600">Loading...</div>
         ) : detail.error ? (
@@ -91,7 +103,7 @@ export function StaffComplaintPage() {
         )}
       </Card>
 
-      <Card title="Complaint content">
+      <Card title="Complaint content" className="bg-gradient-to-b from-white to-slate-50/70">
         {detail.data?.content_locked ? (
           <div className="text-sm text-amber-700">Content locked until approval.</div>
         ) : (
@@ -99,7 +111,7 @@ export function StaffComplaintPage() {
         )}
       </Card>
 
-      <Card title="Status update">
+      <Card title="Status update" className="bg-gradient-to-b from-white to-cyan-50/20">
         {!canUpdate ? (
           <div className="text-sm text-slate-600">Your role is read-only for complaint updates.</div>
         ) : (
@@ -133,6 +145,37 @@ export function StaffComplaintPage() {
               {addUpdate.error ? <div className="text-sm text-rose-700">{(addUpdate.error as Error).message}</div> : null}
             </div>
           </div>
+        )}
+      </Card>
+
+      <Card title="Request proof from reporter" className="bg-gradient-to-b from-white to-amber-50/30">
+        {["HR", "MANAGER", "REGIONAL_OFFICER"].includes(staff.role) ? (
+          <div className="space-y-3">
+            <div className="text-xs text-slate-600">
+              Ask the reporter for supporting documents or additional context. This request appears on the status page.
+            </div>
+            <Textarea
+              value={proofRequestMessage}
+              onChange={(e) => setProofRequestMessage(e.target.value)}
+              rows={3}
+              placeholder="Please upload any supporting proof (documents, screenshots, recordings) if available."
+            />
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={async () => {
+                  await requestProof.mutateAsync({ complaintId: String(id), message: proofRequestMessage });
+                  setProofRequestMessage("");
+                  await timeline.refetch();
+                }}
+                disabled={requestProof.isPending || proofRequestMessage.trim().length < 5}
+              >
+                {requestProof.isPending ? "Sending..." : "Request proof"}
+              </Button>
+              {requestProof.error ? <div className="text-sm text-rose-700">{(requestProof.error as Error).message}</div> : null}
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-slate-600">Only approval authorities can request proof.</div>
         )}
       </Card>
 
