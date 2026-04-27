@@ -45,19 +45,21 @@ export function LoginPage() {
   return (
     <div className="mx-auto grid max-w-6xl gap-6 px-4 py-10 lg:grid-cols-2 lg:items-center">
       <div className="space-y-4">
-        <div className="text-sm font-semibold uppercase tracking-wide text-indigo-700">Staff portal</div>
+        <div className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-sm font-semibold uppercase tracking-wide text-indigo-700">
+          Staff portal
+        </div>
         <div className="text-3xl font-semibold tracking-tight text-slate-900">Sign in to manage complaints</div>
         <div className="text-sm leading-6 text-slate-600">
           Use your organization email and password. Your account role (Admin, HR, Manager, Staff) is detected
           automatically after authentication.
         </div>
-        <div className="rounded-xl border bg-white p-4 text-sm text-slate-700">
+        <div className="rounded-xl border border-cyan-200 bg-gradient-to-br from-white to-cyan-50 p-4 text-sm text-slate-700">
           Privacy note: reporter identities remain protected. Staff actions are audit logged and tamper-evident.
         </div>
       </div>
 
       <div>
-        <Card title="Sign in">
+        <Card title="Sign in" className="bg-gradient-to-b from-white to-indigo-50/30">
           <form
             className="space-y-4"
             onSubmit={form.handleSubmit(async (v) => {

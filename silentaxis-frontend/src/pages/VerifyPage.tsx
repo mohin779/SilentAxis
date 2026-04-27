@@ -57,7 +57,16 @@ export function VerifyPage() {
   );
 
   return (
-    <div className="grid gap-6 md:grid-cols-2">
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-600 p-6 text-white shadow-lg">
+        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-100">Anonymous Access</div>
+        <div className="mt-2 text-2xl font-semibold tracking-tight">Verify securely before complaint submission</div>
+        <div className="mt-2 max-w-3xl text-sm text-indigo-50/95">
+          Identity is verified via OTP and converted to an anonymous eligibility receipt. No direct reporter identity is
+          exposed in complaint handling.
+        </div>
+      </div>
+      <div className="grid gap-6 md:grid-cols-2">
       <Card title="Verify employee identity">
         {!challengeId ? (
           <form
@@ -150,7 +159,8 @@ export function VerifyPage() {
         )}
       </Card>
 
-      <Card title="Why this is safe">{explanation}</Card>
+      <Card title="Why this is safe" className="bg-gradient-to-b from-white to-indigo-50/40">{explanation}</Card>
+      </div>
     </div>
   );
 }

@@ -20,6 +20,8 @@ export function ReportPage() {
   const [result, setResult] = useState<{ complaintId: string; secretKey: string; hash: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofNote, setProofNote] = useState("");
   const eligibilityReceipt = useAuthStore((s) => s.zkEligibilityReceipt);
   const clearEligibilityReceipt = useAuthStore((s) => s.setZkEligibilityReceipt);
   const verifiedOrgId = useAuthStore((s) => s.verifiedOrgId);
@@ -56,10 +58,61 @@ export function ReportPage() {
     ]);
   }
 
+  function toBase64Utf8(value: string): string {
+    const bytes = new TextEncoder().encode(value);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 1) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
+  async function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+      reader.onerror = () => reject(new Error("Unable to read uploaded proof file"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function createComplaintWithRetry(payload: {
+    encryptedComplaint: string;
+    category: Form["category"];
+    proof?: unknown;
+    publicSignals?: { root: string; nullifierHash: string };
+    nullifierHash?: string;
+    root?: string;
+  }): Promise<{ complaintId: string; hash: string; secretKey: string }> {
+    try {
+      const first = await api.post<{ complaintId: string; hash: string; secretKey: string }>("/complaints", payload, {
+        timeout: 30_000
+      });
+      return first.data;
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      if (!/timeout/i.test(msg)) {
+        throw e;
+      }
+      const second = await api.post<{ complaintId: string; hash: string; secretKey: string }>("/complaints", payload, {
+        timeout: 60_000
+      });
+      return second.data;
+    }
+  }
+
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <Card title="Submit anonymous complaint">
-        <div className="mb-4 rounded-xl border bg-amber-50 p-4 text-sm text-amber-900">
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-900 p-6 text-white shadow-xl">
+        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-200">Protected Reporting</div>
+        <div className="mt-2 text-2xl font-semibold tracking-tight">Submit complaint safely and anonymously</div>
+        <div className="mt-2 max-w-3xl text-sm text-slate-200">
+          Professional intake workflow with optional proof upload, sanitized preview, and zero-knowledge privacy safeguards.
+        </div>
+      </div>
+      <div className="grid gap-6 lg:grid-cols-2">
+      <Card title="Submit anonymous complaint" className="bg-gradient-to-b from-white to-slate-50/70">
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           You are verified anonymously. <span className="font-semibold">Do not include personal identifiers</span> in
           your text.
         </div>
@@ -121,7 +174,7 @@ export function ReportPage() {
                 }
               }
 
-              const encryptedComplaint = btoa(
+              const encryptedComplaint = toBase64Utf8(
                 JSON.stringify({
                   title: v.title,
                   description: v.description,
@@ -129,7 +182,7 @@ export function ReportPage() {
                   createdAt: new Date().toISOString()
                 })
               );
-              const r = await api.post<{ complaintId: string; hash: string; secretKey: string }>("/complaints", {
+              const complaintPayload = {
                 encryptedComplaint,
                 category: v.category,
                 ...(proofBundle
@@ -140,11 +193,26 @@ export function ReportPage() {
                       root: proofBundle.root
                     }
                   : {})
-                  }, {
-                    timeout: 30_000
-              });
+              };
+              const created = await createComplaintWithRetry(complaintPayload);
+              if (proofFile) {
+                const base64 = await fileToBase64(proofFile);
+                await api.post(
+                  "/complaints/status/proof",
+                  {
+                    complaintId: created.complaintId,
+                    secretKey: created.secretKey,
+                    message: proofNote || "Reporter uploaded optional initial proof at submission.",
+                    fileName: proofFile.name,
+                    fileBase64: base64
+                  },
+                  { timeout: 30_000 }
+                );
+              }
               clearEligibilityReceipt(null);
-              setResult({ complaintId: r.data.complaintId, hash: r.data.hash, secretKey: r.data.secretKey });
+              setResult({ complaintId: created.complaintId, hash: created.hash, secretKey: created.secretKey });
+              setProofFile(null);
+              setProofNote("");
             } catch (e) {
               setError((e as Error).message);
             }
@@ -185,8 +253,19 @@ export function ReportPage() {
             ) : null}
           </div>
 
-          <div className="rounded-xl border bg-slate-50 p-3 text-xs text-slate-600">
-            Evidence support is enabled in backend workflow; secure upload UI can be attached in the next step.
+          <div className="rounded-xl border bg-slate-50 p-4">
+            <div className="text-sm font-semibold text-slate-900">Optional proof upload</div>
+            <div className="mt-1 text-xs text-slate-600">
+              Upload any supporting document only if you have one. Admin can also request proof later from status page.
+            </div>
+            <div className="mt-3 space-y-3">
+              <Input type="file" onChange={(e) => setProofFile(e.target.files?.[0] ?? null)} />
+              <Input
+                value={proofNote}
+                onChange={(e) => setProofNote(e.target.value)}
+                placeholder="Optional note about the uploaded proof"
+              />
+            </div>
           </div>
 
           <div className="rounded-xl border bg-slate-50 p-4">
@@ -223,7 +302,7 @@ export function ReportPage() {
         </form>
       </Card>
 
-      <Card title="Sanitized preview">
+      <Card title="Sanitized preview" className="bg-gradient-to-b from-white to-cyan-50/30">
         <div className="space-y-3">
           <div>
             <div className="text-xs text-slate-500">Title (sanitized)</div>
@@ -237,6 +316,7 @@ export function ReportPage() {
           </div>
         </div>
       </Card>
+      </div>
     </div>
   );
 }

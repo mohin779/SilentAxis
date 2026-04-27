@@ -10,7 +10,8 @@ import {
   getTimeline,
   importEmployeesCsv,
   listEmployees,
-  listComplaints
+  listComplaints,
+  requestProofFromReporter
 } from "./admin.controller";
 
 export const adminRouter = Router();
@@ -44,6 +45,12 @@ adminRouter.post(
   requireStaffSession,
   requireStaffRole(["HR", "MANAGER", "REGIONAL_OFFICER"]),
   decideApproval
+);
+adminRouter.post(
+  "/complaints/:id/request-proof",
+  requireStaffSession,
+  requireStaffRole(["HR", "MANAGER", "REGIONAL_OFFICER"]),
+  requestProofFromReporter
 );
 adminRouter.post("/admin/export", requireStaffSession, requireStaffRole(["ORG_ADMIN"]), createExportJob);
 adminRouter.get("/admin/employees", requireStaffSession, requireStaffRole(["ORG_ADMIN"]), listEmployees);

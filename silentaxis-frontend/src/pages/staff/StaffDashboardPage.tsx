@@ -25,6 +25,13 @@ export function StaffDashboardPage() {
 
   return (
     <div className="space-y-6">
+      <div className="rounded-2xl border border-violet-200/70 bg-gradient-to-r from-violet-700 via-indigo-700 to-cyan-700 p-6 text-white shadow-lg">
+        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-100">Operations Center</div>
+        <div className="mt-2 text-2xl font-semibold tracking-tight">Complaint monitoring dashboard</div>
+        <div className="mt-2 text-sm text-violet-50/95">
+          Filter, review, and escalate complaints with clear status visibility and evidence-aware workflow.
+        </div>
+      </div>
       <div className="flex items-end justify-between">
         <div>
           <div className="text-sm text-slate-600">Organization</div>
@@ -36,7 +43,7 @@ export function StaffDashboardPage() {
         </div>
       </div>
 
-      <Card title="Complaints">
+      <Card title="Complaints" className="bg-gradient-to-b from-white to-slate-50/70">
         <div className="mb-4 grid gap-4 md:grid-cols-3">
           <div>
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category</div>
@@ -73,7 +80,7 @@ export function StaffDashboardPage() {
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id} className="border-b last:border-0">
+                  <tr key={r.id} className="border-b border-slate-200/80 last:border-0 hover:bg-slate-50/70">
                     <td className="py-2 font-mono text-xs">
                       <Link className="text-indigo-700 hover:underline" to={`/staff/complaint/${r.id}`}>
                         {r.id}
