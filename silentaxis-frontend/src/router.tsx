@@ -5,6 +5,7 @@ import { StaffLayout } from "./layouts/StaffLayout";
 import { VerifyPage } from "./pages/VerifyPage";
 import { ReportPage } from "./pages/ReportPage";
 import { StatusPage } from "./pages/StatusPage";
+import { ProfilePage } from "./pages/ProfilePage";
 import { LoginPage } from "./pages/LoginPage";
 import { StaffDashboardPage } from "./pages/staff/StaffDashboardPage";
 import { StaffComplaintPage } from "./pages/staff/StaffComplaintPage";
@@ -28,7 +29,8 @@ export const router = createBrowserRouter([
           </RequireAnonToken>
         )
       },
-      { path: "status", element: <StatusPage /> }
+      { path: "status", element: <StatusPage /> },
+      { path: "profile", element: <ProfilePage /> }
     ]
   },
   { path: "/login", element: <LoginPage /> },

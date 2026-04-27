@@ -1,26 +1,22 @@
 import axios from "axios";
-import { useAuthStore } from "../store/authStore";
 
 export const api = axios.create({
-  baseURL: "http://localhost:4000",
+  baseURL: "/api",
   withCredentials: true,
+  timeout: 20_000,
   headers: {
     "Content-Type": "application/json"
   }
 });
 
-api.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().anonymousToken;
-  if (token && config.headers?.["x-requires-anon-token"]) {
-    delete config.headers["x-requires-anon-token"];
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
 api.interceptors.response.use(
   (r) => r,
   (err) => {
+    const code = err?.code as string | undefined;
+    const url = (err?.config?.url as string | undefined) ?? "unknown endpoint";
+    if (code === "ECONNABORTED") {
+      return Promise.reject(new Error(`Request timeout at ${url}`));
+    }
     const message =
       err?.response?.data?.error ??
       err?.response?.data?.message ??

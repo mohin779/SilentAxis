@@ -1,5 +1,5 @@
 import { NextFunction, Response } from "express";
-import { redis } from "../config/redis";
+import { redisApi } from "../config/redis";
 import { AuthRequest } from "./auth";
 import { TorAwareRequest } from "./torHeaders";
 
@@ -23,11 +23,11 @@ export function enforceDeviceBinding(req: AuthRequest & TorAwareRequest, res: Re
     return;
   }
   const key = `device:${req.authUser.sessionId}`;
-  redis
+  redisApi
     .get(key)
     .then(async (existing) => {
       if (!existing) {
-        await redis.set(key, fingerprint, "EX", 3600);
+        await redisApi.set(key, fingerprint, "EX", 3600);
         next();
         return;
       }
@@ -35,7 +35,7 @@ export function enforceDeviceBinding(req: AuthRequest & TorAwareRequest, res: Re
         res.status(403).json({ error: "Device binding mismatch" });
         return;
       }
-      await redis.expire(key, 3600);
+      await redisApi.expire(key, 3600);
       next();
     })
     .catch(() => {

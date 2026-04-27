@@ -40,7 +40,7 @@ class SnarkJsVerifier implements ZkVerifier {
           ) => Promise<boolean>;
         };
       };
-      const publicSignals = [nullifierHash, root];
+      const publicSignals = [root, nullifierHash];
       return await snarkjs.groth16.verify(this.verificationKey as VerificationKey, publicSignals, proof);
     } catch {
       return false;

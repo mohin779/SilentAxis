@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 import { Job, Worker } from "bullmq";
 import { pool } from "../config/db";
-import { redis } from "../config/redis";
+import { redisQueue } from "../config/redis";
 import { EVIDENCE_SCAN_QUEUE_NAME, EvidenceScanJobPayload } from "../queues/evidenceScan.queue";
 
 const maxFileBytes = 10 * 1024 * 1024;
@@ -53,6 +53,6 @@ let evidenceWorker: Worker<EvidenceScanJobPayload> | undefined;
 export async function startEvidenceScanWorker(): Promise<void> {
   if (evidenceWorker) return;
   evidenceWorker = new Worker<EvidenceScanJobPayload>(EVIDENCE_SCAN_QUEUE_NAME, processEvidenceScan, {
-    connection: redis
+    connection: redisQueue
   });
 }

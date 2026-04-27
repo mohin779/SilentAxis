@@ -19,7 +19,9 @@ type OtpForm = z.infer<typeof otpSchema>;
 
 export function VerifyPage() {
   const nav = useNavigate();
-  const setAnon = useAuthStore((s) => s.setAnonymousToken);
+  const setEligibilityReceipt = useAuthStore((s) => s.setZkEligibilityReceipt);
+  const setVerifiedOrgId = useAuthStore((s) => s.setVerifiedOrgId);
+  const setAnonymousIdentity = useAuthStore((s) => s.setAnonymousIdentity);
   const [challengeId, setChallengeId] = useState<string | null>(null);
   const [devOtp, setDevOtp] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -43,11 +45,11 @@ export function VerifyPage() {
         <p className="font-medium text-slate-900">Anonymous verification</p>
         <p>
           We verify you are a real employee via OTP routed to your organization email.
-          After verification, the system issues an <span className="font-semibold">anonymous access token</span> and
-          immediately removes the identity linkage.
+          After verification, the system issues a <span className="font-semibold">one-time eligibility receipt</span>
+          used only to register a ZK commitment.
         </p>
         <p className="text-xs text-slate-500">
-          Security rule: the anonymous token is stored only in memory (not localStorage, not cookies).
+          Security rule: no long-lived identity token is created or stored.
         </p>
       </div>
     ),
@@ -96,12 +98,16 @@ export function VerifyPage() {
               setError(null);
               setStatus(null);
               try {
-                const r = await api.post<{ token: string; tokenType: string }>("/auth/verify-otp", {
-                  challengeId,
-                  otp: v.otp
-                });
-                setAnon(r.data.token);
-                setStatus("You are now verified anonymously. Your identity is not stored.");
+                const r = await api.post<{
+                  verified: boolean;
+                  eligibilityReceipt: string;
+                  orgId: string;
+                  anonymousIdentity: { identityNullifier: string; identityTrapdoor: string; commitment: string };
+                }>("/auth/verify-otp", { challengeId, otp: v.otp });
+                setEligibilityReceipt(r.data.eligibilityReceipt);
+                setVerifiedOrgId(r.data.orgId);
+                setAnonymousIdentity(r.data.anonymousIdentity);
+                setStatus("OTP verified. Redirecting to complaint submission.");
                 nav("/report", { replace: true });
               } catch (e) {
                 setError((e as Error).message);

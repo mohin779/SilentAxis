@@ -2,11 +2,11 @@ import { pool } from "../config/db";
 import { v4 as uuidv4 } from "uuid";
 
 export async function runEscalationOnce(): Promise<void> {
-  // 48h timeout escalation if complaint still SUBMITTED and no staff update exists.
+  // 48h timeout escalation if complaint is still not progressed.
   const stale = await pool.query(
     `SELECT c.id, c.org_id
      FROM complaints c
-     WHERE c.complaint_status = 'SUBMITTED'
+     WHERE c.complaint_status IN ('SUBMITTED','UNDER_REVIEW')
        AND c.created_at <= NOW() - INTERVAL '48 hours'`
   );
 

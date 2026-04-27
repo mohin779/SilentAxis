@@ -12,8 +12,7 @@ import { apiRateLimit } from "./middleware/rateLimit";
 import { errorHandler } from "./middleware/errorHandler";
 import { requestAuditLog } from "./middleware/requestAuditLog";
 import { torHeaders } from "./middleware/torHeaders";
-import { reporterRouter } from "./modules/reporter/reporter.routes";
-import { redis } from "./config/redis";
+import { redisQueue } from "./config/redis";
 import { staffAuthRouter } from "./modules/staffAuth/staffAuth.routes";
 
 export const app = express();
@@ -53,7 +52,7 @@ app.use(
     },
     // Default to memory store for reliable local development.
     // Set SESSION_STORE=redis to explicitly use Redis-backed sessions.
-    ...(process.env.SESSION_STORE === "redis" ? { store: new RedisStore({ client: redis as any }) } : {})
+    ...(process.env.SESSION_STORE === "redis" ? { store: new RedisStore({ client: redisQueue as any }) } : {})
   })
 );
 
@@ -62,10 +61,9 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/auth", authRouter);
-app.use("/staff-auth", staffAuthRouter);
 app.use("/identity", identityRouter);
+app.use("/staff-auth", staffAuthRouter);
 app.use("/complaints", complaintsRouter);
-app.use("/reporter", reporterRouter);
 app.use("/", adminRouter);
 
 app.use(errorHandler);

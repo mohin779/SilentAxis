@@ -3,37 +3,28 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { api } from "../api/client";
-import { Badge, Button, Card, Input, Label, Textarea } from "../components/ui";
+import { Badge, Button, Card, Input, Label } from "../components/ui";
 
 const schema = z.object({
   complaintId: z.string().uuid(),
-  secret: z.string().min(8),
-  message: z.string().max(5000).optional().or(z.literal(""))
+  secretKey: z.string().min(8)
 });
 type Form = z.infer<typeof schema>;
 
-type MessageRow = {
+type TimelineRow = {
   id: string;
-  complaint_id: string;
-  sender_type: "reporter" | "investigator";
-  encrypted_message: string;
+  message: string;
   created_at: string;
 };
 
 export function StatusPage() {
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [status, setStatus] = useState<{ status: string; visibilityStatus: string; timeline: TimelineRow[] } | null>(null);
 
   const form = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { complaintId: "", secret: "", message: "" }
+    defaultValues: { complaintId: "", secretKey: "" }
   });
-
-  async function refresh(complaintId: string) {
-    const r = await api.get<MessageRow[]>(`/reporter/messages/${complaintId}`);
-    setMessages(r.data);
-  }
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -43,10 +34,10 @@ export function StatusPage() {
           onSubmit={form.handleSubmit(async (v) => {
             setError(null);
             try {
-              await api.post("/reporter/login", { complaintId: v.complaintId, secret: v.secret });
-              await api.post("/reporter/session", { complaintId: v.complaintId, secret: v.secret });
-              setLoggedIn(true);
-              await refresh(v.complaintId);
+              const r = await api.get<{ status: string; visibilityStatus: string; timeline: TimelineRow[] }>("/complaints/status", {
+                params: { complaintId: v.complaintId, secretKey: v.secretKey }
+              });
+              setStatus(r.data);
             } catch (e) {
               setError((e as Error).message);
             }
@@ -58,7 +49,7 @@ export function StatusPage() {
           </div>
           <div>
             <Label>Secret key</Label>
-            <Input placeholder="Secret" {...form.register("secret")} />
+            <Input placeholder="Secret key" {...form.register("secretKey")} />
           </div>
 
           {error ? (
@@ -73,51 +64,25 @@ export function StatusPage() {
         </form>
       </Card>
 
-      <Card title="Messages (anonymous)">
-        {!loggedIn ? (
-          <div className="text-sm text-slate-600">Login with complaint ID + secret key to view messages.</div>
+      <Card title="Complaint timeline">
+        {!status ? (
+          <div className="text-sm text-slate-600">Use complaint ID + secret key to view status.</div>
         ) : (
           <div className="space-y-4">
-            <div className="rounded-xl border bg-slate-50 p-3 text-xs text-slate-600">
-              Messages are stored encrypted in the backend. This UI shows ciphertext (backend does not expose plaintext
-              decryption for reporters).
+            <div className="flex gap-2">
+              <Badge tone="neutral">Status: {status.status}</Badge>
+              <Badge tone={status.visibilityStatus === "APPROVED" ? "success" : "warning"}>
+                Approval: {status.visibilityStatus}
+              </Badge>
             </div>
             <div className="space-y-2">
-              {messages.map((m) => (
+              {status.timeline.map((m) => (
                 <div key={m.id} className="rounded-lg border bg-white p-3">
-                  <div className="flex items-center justify-between">
-                    <Badge tone={m.sender_type === "investigator" ? "neutral" : "success"}>{m.sender_type}</Badge>
-                    <div className="text-xs text-slate-500">{new Date(m.created_at).toLocaleString()}</div>
-                  </div>
-                  <div className="mt-2 font-mono text-[11px] text-slate-700 break-all">{m.encrypted_message}</div>
+                  <div className="text-sm text-slate-900">{m.message}</div>
+                  <div className="mt-1 text-xs text-slate-500">{new Date(m.created_at).toLocaleString()}</div>
                 </div>
               ))}
             </div>
-
-            <form
-              className="space-y-2"
-              onSubmit={form.handleSubmit(async (v) => {
-                setError(null);
-                try {
-                  if (!v.message?.trim()) return;
-                  await api.post("/reporter/message", {
-                    complaintId: v.complaintId,
-                    senderType: "reporter",
-                    message: v.message
-                  });
-                  form.setValue("message", "");
-                  await refresh(v.complaintId);
-                } catch (e) {
-                  setError((e as Error).message);
-                }
-              })}
-            >
-              <div>
-                <Label>Reply (anonymous)</Label>
-                <Textarea rows={3} {...form.register("message")} />
-              </div>
-              <Button type="submit">Send reply</Button>
-            </form>
           </div>
         )}
       </Card>

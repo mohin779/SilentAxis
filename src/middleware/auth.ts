@@ -5,6 +5,7 @@ import { AuthUser, Role } from "../types";
 
 export interface AuthRequest extends Request {
   authUser?: AuthUser;
+  anonymousToken?: string;
 }
 
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {

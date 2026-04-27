@@ -4,7 +4,9 @@ import {
   addEmployee,
   addUpdate,
   createExportJob,
+  decideApproval,
   getAdminStats,
+  getComplaintDetail,
   getTimeline,
   importEmployeesCsv,
   listEmployees,
@@ -30,6 +32,18 @@ adminRouter.post(
   requireStaffSession,
   requireStaffRole(["ORG_ADMIN", "ORG_STAFF", "HR"]),
   addUpdate
+);
+adminRouter.get(
+  "/complaints/:id",
+  requireStaffSession,
+  requireStaffRole(["ORG_ADMIN", "ORG_STAFF", "HR", "MANAGER", "REGIONAL_OFFICER"]),
+  getComplaintDetail
+);
+adminRouter.post(
+  "/complaints/:id/approval",
+  requireStaffSession,
+  requireStaffRole(["HR", "MANAGER", "REGIONAL_OFFICER"]),
+  decideApproval
 );
 adminRouter.post("/admin/export", requireStaffSession, requireStaffRole(["ORG_ADMIN"]), createExportJob);
 adminRouter.get("/admin/employees", requireStaffSession, requireStaffRole(["ORG_ADMIN"]), listEmployees);
